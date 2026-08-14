@@ -6,3 +6,12 @@ ProductName:		macOS
 ProductVersion:		26.6.1
 BuildVersion:		25G76
 26.5
+--- toolchain ---
+Homebrew clang version 22.1.8
+clang major: 22
+clang minor: 1
+clang patchlevel: 8
+cplusplus: 202002
+_LIBCPP_VERSION: 220108
+destructive: 256
+constructive: 64
