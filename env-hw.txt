@@ -1,0 +1,8 @@
+hw.cachelinesize: 128
+hw.perflevel0.logicalcpu: 4
+hw.perflevel1.logicalcpu: 4
+machdep.cpu.brand_string: Apple M2
+ProductName:		macOS
+ProductVersion:		26.6.1
+BuildVersion:		25G76
+26.5
