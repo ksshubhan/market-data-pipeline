@@ -59,4 +59,4 @@ That's the bouncing: ownership of one 128-byte line ricocheting between cores, w
 
 Bouncing is expensive. Reading from your own L1 is a few cycles. Getting a line transferred from another core's cache is on the order of tens of cycles — some multiple of ten times worse. Do that on every single queue operation and you've turned a handful of instructions into a memory-system negotiation.
 
-False sharing does not cause bouncing it is the name given to the scenario here bouncing is unncessary where the two variables are logically unrelated but they only collide because of memeory layout 
+False sharing does not cause bouncing it is the name given to the scenario here bouncing is unncessary where the two variables are logically unrelated but they only collide because of memeory layout
