@@ -3,3 +3,9 @@ data/
 .DS_Store
 probe
 probe_apple
+.venv/
+__pycache__/
+compile_commands.json
+*.dSYM/
+.cache/
+results/*.csv
