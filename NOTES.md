@@ -162,3 +162,107 @@ measurement window ≈ P(boundary crossing) × timer period
 
 This establishes the timing resolution and measurement limitations that constrain the
 later SPSC ring-buffer benchmarks.
+
+
+## Record Layout
+
+`Record` is an 80-byte runtime object:
+
+- `sequence`: 8 bytes
+- `replay_intended_send_ns`: 8 bytes
+- embedded `CaptureRecord`: 56 bytes
+- `symbol_id`: 2 bytes
+- `reserved[6]`: 6 bytes
+
+Therefore:
+
+8 + 8 + 56 + 2 + 6 = 80 bytes
+
+The six tail bytes are explicit rather than compiler-inserted padding, so they can be deliberately zeroed by the replay producer.
+
+`sizeof(Record) == 80`
+`alignof(Record) == 8`
+`offsetof(Record, capture) == 16`
+
+Any later A3 padding experiment applies to the enclosing ring-buffer slot, not to `Record` itself.
+
+Capture receive timestamps use time.time_ns(), so they are Unix epoch wall-clock timestamps in nanoseconds. Binance E and T are Unix epoch wall-clock timestamps in milliseconds. After converting the Binance timestamp to nanoseconds, the values can be compared, but the difference is not a pure network-latency measurement: it also includes wall-clock synchronization error between Binance and the capture machine.
+
+Long capture: 2026-08-20 13:08:13 UTC to 19:08:51 UTC (6:00:38). Captured 13,749,492 BTCUSDT futures bookTicker messages, 55,775 ETHWUSDT futures bookTicker messages, 85,853 BTCUSDT futures depth messages, and 5,376,025 BTCUSDT spot bookTicker messages. No stream reconnects occurred. Full BTCUSDT depth continuity validation found 0 sequence gaps across 85,853 events (current pu == previous u for every consecutive event).
+
+### CaptureRecord layout
+
+`CaptureRecord` contains the seven capture-derived 8-byte fields:
+
+* `capture_wall_time_ns`
+* `event_time_ms`
+* `transaction_time_ms`
+* `bid_price`
+* `ask_price`
+* `bid_qty`
+* `ask_qty`
+
+Therefore:
+
+`sizeof(CaptureRecord) == 56`
+
+`Record` embeds `CaptureRecord` directly as its `capture` member. This makes the relationship structural rather than maintaining a duplicated seven-field layout. A compile-time assertion verifies that `capture` begins at offset 16.
+
+`Record` remains 80 bytes. Any later A3 padding experiment applies to the enclosing ring-buffer slot, not to `Record` itself.
+
+
+
+### Fixed-point scale
+
+Prices and quantities are stored as signed 64-bit integers scaled by `10^8`.
+
+The futures captures required at most 6 fractional digits:
+
+* BTCUSDT: maximum 3 fractional digits
+* ETHWUSDT: maximum 6 fractional digits
+
+The saved Binance futures `exchangeInfo` snapshot also reports a maximum rendered filter precision of 6 fractional digits for the replayed symbols:
+
+* BTCUSDT: `tickSize = 0.10`, `stepSize = 0.001`
+* ETHWUSDT: `tickSize = 0.000100`, `stepSize = 1`
+
+A scale of `10^8` therefore provides two additional decimal places of headroom for the current replay symbols. The parser must still reject any value containing more than 8 fractional digits rather than silently truncating it.
+
+### Futures capture validation
+
+Both completed futures bookTicker captures were checked before parser implementation.
+
+* BTCUSDT: 13,749,492 raw lines and 13,749,492 bookTicker messages
+* ETHWUSDT: 55,775 raw lines and 55,775 bookTicker messages
+* No non-payload messages were present
+* No unusual leading-zero numeric representations were observed
+* Binance event timestamp `E` never decreased in either capture
+
+The ETHWUSDT trace also contains meaningful burst structure and is suitable for the B2 captured-burst experiment. Its inter-arrival statistics were:
+
+* median gap: 28.36 ms
+* mean gap: 387.91 ms
+* coefficient of variation: 2.00
+* 26.75% of gaps ≤ 1 ms
+* 40.91% of gaps ≤ 10 ms
+* 13.81% of gaps ≥ 1 s
+
+B2 should preserve these relative inter-arrival gaps while applying uniform time compression to raise the offered rate. Experimental arms should be compared within the same symbol because BTCUSDT and ETHWUSDT have very different replay working-set sizes.
+
+The parser converts one futures bookTicker capture message into validated, fixed-point capture data. It populates E, T, capture timestamp, bid/ask prices and quantities. It does not create replay sequence numbers or intended-send timestamps and does not perform replay/ring-buffer work.
+
+
+### Timestamp fields and ownership
+
+* `event_time_ms` and `transaction_time_ms` are Binance Unix epoch wall-clock timestamps in milliseconds.
+* `capture_wall_time_ns` is the local capture machine's Unix epoch wall-clock timestamp from Python `time.time_ns()`, in nanoseconds.
+* `replay_intended_send_ns` belongs to the replay run's monotonic clock and is used for replay scheduling and latency measurement.
+
+`capture_wall_time_ns` may be compared with Binance `E` or `T` after converting units, but the difference includes wall-clock synchronization error between Binance and the capture machine and must not be interpreted as pure network latency.
+
+`replay_intended_send_ns` belongs to a different clock domain and must not be directly compared with Binance wall-clock timestamps or `capture_wall_time_ns`.
+
+`sequence` and `replay_intended_send_ns` are assigned by the replay producer. The parser populates only capture-derived fields.
+
+
+Binary format version covers the entire file format. Any incompatible change to either the 64-byte header or CaptureRecord layout requires a version bump. record_size is still stored as an independent sanity check.
