@@ -20,3 +20,7 @@ add_executable(convert_capture
     src/convert_capture.cpp
     src/parser.cpp
 )
+
+add_executable(test_mutex_queue
+    src/test_mutex_queue.cpp
+)
