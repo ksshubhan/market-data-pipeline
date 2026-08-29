@@ -24,3 +24,11 @@ add_executable(convert_capture
 add_executable(test_mutex_queue
     src/test_mutex_queue.cpp
 )
+
+add_executable(test_spsc_ring_buffer
+    src/test_spsc_ring_buffer.cpp
+)
+
+add_executable(check_spsc_assembly
+    src/check_spsc_assembly.cpp
+)

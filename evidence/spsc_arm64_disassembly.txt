@@ -1,0 +1,66 @@
+--- push_once ---
+0000000100000c28 <push_once(SpscRingBuffer<Record, 1024ul, 128ul>&, Record const&)>:
+100000c28: f9400008    	ldr	x8, [x0]
+100000c2c: f9400409    	ldr	x9, [x0, #0x8]
+100000c30: cb090109    	sub	x9, x8, x9
+100000c34: f110013f    	cmp	x9, #0x400
+100000c38: 54000161    	b.ne	0x100000c64 <push_once(SpscRingBuffer<Record, 1024ul, 128ul>&, Record const&)+0x3c>
+100000c3c: d9480009    	ldapur	x9, [x0, #0x80]
+100000c40: f9000409    	str	x9, [x0, #0x8]
+100000c44: cb090109    	sub	x9, x8, x9
+100000c48: f110013f    	cmp	x9, #0x400
+100000c4c: 540000c1    	b.ne	0x100000c64 <push_once(SpscRingBuffer<Record, 1024ul, 128ul>&, Record const&)+0x3c>
+100000c50: f9400809    	ldr	x9, [x0, #0x10]
+100000c54: 91000529    	add	x9, x9, #0x1
+100000c58: f9000809    	str	x9, [x0, #0x10]
+100000c5c: 52800000    	mov	w0, #0x0                ; =0
+100000c60: d65f03c0    	ret
+100000c64: 52800a09    	mov	w9, #0x50               ; =80
+100000c68: 9240250a    	and	x10, x8, #0x3ff
+100000c6c: 9ba90149    	umaddl	x9, w10, w9, x0
+100000c70: 3dc00020    	ldr	q0, [x1]
+100000c74: 3d804120    	str	q0, [x9, #0x100]
+100000c78: ad408420    	ldp	q0, q1, [x1, #0x10]
+100000c7c: ad418c22    	ldp	q2, q3, [x1, #0x30]
+100000c80: ad098d22    	stp	q2, q3, [x9, #0x130]
+100000c84: ad088520    	stp	q0, q1, [x9, #0x110]
+100000c88: 91000508    	add	x8, x8, #0x1
+100000c8c: c89ffc08    	stlr	x8, [x0]
+100000c90: 52800020    	mov	w0, #0x1                ; =1
+100000c94: d65f03c0    	ret
+
+
+--- pop_once ---
+0000000100000c98 <pop_once(SpscRingBuffer<Record, 1024ul, 128ul>&, Record&)>:
+100000c98: f9404008    	ldr	x8, [x0, #0x80]
+100000c9c: f9404409    	ldr	x9, [x0, #0x88]
+100000ca0: eb08013f    	cmp	x9, x8
+100000ca4: 540000e1    	b.ne	0x100000cc0 <pop_once(SpscRingBuffer<Record, 1024ul, 128ul>&, Record&)+0x28>
+100000ca8: f8bfc009    	ldapr	x9, [x0]
+100000cac: f9004409    	str	x9, [x0, #0x88]
+100000cb0: eb08013f    	cmp	x9, x8
+100000cb4: 54000061    	b.ne	0x100000cc0 <pop_once(SpscRingBuffer<Record, 1024ul, 128ul>&, Record&)+0x28>
+100000cb8: 52800000    	mov	w0, #0x0                ; =0
+100000cbc: d65f03c0    	ret
+100000cc0: 52800a09    	mov	w9, #0x50               ; =80
+100000cc4: 9240250a    	and	x10, x8, #0x3ff
+100000cc8: 9ba90149    	umaddl	x9, w10, w9, x0
+100000ccc: 3dc04120    	ldr	q0, [x9, #0x100]
+100000cd0: 3d800020    	str	q0, [x1]
+100000cd4: ad488520    	ldp	q0, q1, [x9, #0x110]
+100000cd8: ad498d22    	ldp	q2, q3, [x9, #0x130]
+100000cdc: ad018c22    	stp	q2, q3, [x1, #0x30]
+100000ce0: ad008420    	stp	q0, q1, [x1, #0x10]
+100000ce4: 91000508    	add	x8, x8, #0x1
+100000ce8: d9080008    	stlur	x8, [x0, #0x80]
+100000cec: 52800020    	mov	w0, #0x1                ; =1
+100000cf0: d65f03c0    	ret
+
+
+--- acquire/release instructions ---
+100000c3c: d9480009    	ldapur	x9, [x0, #0x80]
+100000c8c: c89ffc08    	stlr	x8, [x0]
+100000ca8: f8bfc009    	ldapr	x9, [x0]
+100000ce8: d9080008    	stlur	x8, [x0, #0x80]
+
+--- exclusive/RMW instructions (expected empty) ---
