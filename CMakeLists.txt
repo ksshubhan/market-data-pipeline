@@ -32,3 +32,7 @@ add_executable(test_spsc_ring_buffer
 add_executable(check_spsc_assembly
     src/check_spsc_assembly.cpp
 )
+
+add_executable(environment_probe
+    src/environment_probe.cpp
+)

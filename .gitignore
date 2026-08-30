@@ -11,3 +11,4 @@ compile_commands.json
 results/*.csv
 captures/
 /convert_capture
+/env/measurement_environment_*.txt
