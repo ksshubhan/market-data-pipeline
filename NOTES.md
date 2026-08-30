@@ -266,3 +266,47 @@ The parser converts one futures bookTicker capture message into validated, fixed
 
 
 Binary format version covers the entire file format. Any incompatible change to either the 64-byte header or CaptureRecord layout requires a version bump. record_size is still stored as an independent sanity check.
+
+
+## A1 memory-order benchmark
+
+Formal A1 measurements were collected from commit `f143940271ae407e7cc9820932fbaa79660dbbae` on Apple M2 under AC power with Low Power Mode disabled. The benchmark used 10 randomized rounds per arm and 10,000,000 completed handoffs per trial.
+
+### A1a — atomic-only
+
+Median completed-handoff throughput:
+
+* relaxed: 24.97 M handoffs/s
+* acquire/release: 24.96 M handoffs/s
+* seq_cst: 24.20 M handoffs/s
+
+Relaxed and acquire/release were effectively indistinguishable by median throughput, differing by approximately 0.04%. Sequential consistency was approximately 3.0% slower than acquire/release.
+
+The atomic-only result therefore does not support a claim that acquire/release is materially faster than relaxed on this workload. It does show a small seq_cst penalty.
+
+### A1b — real 80-byte SPSC queue
+
+Median completed-handoff throughput:
+
+* acquire/release: 28.68 M handoffs/s
+* seq_cst: 22.87 M handoffs/s
+
+Median elapsed time:
+
+* acquire/release: 0.348670 s
+* seq_cst: 0.437279 s
+
+Relative to acquire/release, seq_cst reduced median queue throughput by approximately 20.3% and increased median elapsed time by approximately 25.4%.
+
+This is the more important result because it measures the memory-order choice in the context of the actual 80-byte SPSC queue rather than in an isolated atomic ping-pong.
+
+Median full-rejection counts were:
+
+* acquire/release: 1,019,479
+* seq_cst: 1,958,367
+
+Full-rejection counts varied substantially between trials. They are retained as diagnostic data only: Harness A retries the same record on full, and every valid trial completed exactly 10,000,000 handoffs with no dropped records.
+
+Raw A1 trial data is stored in:
+
+`results/a1_memory_order_20260830_232947.txt`
