@@ -310,3 +310,18 @@ Full-rejection counts varied substantially between trials. They are retained as 
 Raw A1 trial data is stored in:
 
 `results/a1_memory_order_20260830_232947.txt`
+
+
+### C1 — predicted relaxed-publication failure signature
+
+C1 intentionally removes the synchronisation on the producer-to-consumer publication edge by changing the consumer's load of the producer-owned tail index from `memory_order_acquire` to `memory_order_relaxed`. The producer's payload stores remain plain non-atomic stores and its publication store remains `memory_order_release`.
+
+This implementation is intentionally invalid C++. The relaxed load does not synchronise with the producer's release store, so there is no happens-before edge between the producer's writes to the slot payload and the consumer's reads of that payload. The resulting concurrent non-atomic payload accesses constitute a data race and therefore undefined behaviour.
+
+Predicted observable failure on ARM64: the consumer may observe the published tail value before the corresponding slot contents are safely observable. Because a ring slot is reused every `capacity` records, the expected corruption is a mixture of two generations of the same slot — for example, sequence `N - capacity` alongside payload fields belonging to sequence `N`, or sequence `N` alongside one or more payload fields belonging to `N - capacity`.
+
+A repeat or decrease in the consumer-observed sequence is also an unconditional correctness failure. No legal queue policy can produce either.
+
+Observable corruption is not guaranteed to occur in any finite native run. ThreadSanitizer evidence will be collected separately in §8.0a Step 8.
+
+C1 is correctness evidence only. No throughput, handoffs/second, latency, or other performance number from this intentionally invalid implementation will be reported.
