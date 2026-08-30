@@ -36,3 +36,7 @@ add_executable(check_spsc_assembly
 add_executable(environment_probe
     src/environment_probe.cpp
 )
+
+add_executable(harness_a
+    src/harness_a.cpp
+)

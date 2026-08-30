@@ -17,6 +17,87 @@ bool check(bool condition, const char* message)
     return true;
 }
 
+bool test_seq_cst_queue()
+{
+    using Queue = SpscRingBuffer<
+        std::uint64_t,
+        4,
+        128,
+        SpscMemoryOrder::SeqCst
+    >;
+
+    Queue queue;
+
+    if (!check(queue.try_push(10), "seq_cst push 10 failed")) {
+        return false;
+    }
+
+    if (!check(queue.try_push(20), "seq_cst push 20 failed")) {
+        return false;
+    }
+
+    if (!check(queue.try_push(30), "seq_cst push 30 failed")) {
+        return false;
+    }
+
+    if (!check(queue.try_push(40), "seq_cst push 40 failed")) {
+        return false;
+    }
+
+    if (!check(
+            !queue.try_push(50),
+            "seq_cst full queue accepted extra item"
+        )) {
+        return false;
+    }
+
+    if (!check(
+            queue.full_rejections() == 1,
+            "seq_cst full rejection count incorrect"
+        )) {
+        return false;
+    }
+
+    std::uint64_t value = 0;
+
+    if (!check(
+            queue.try_pop(value) && value == 10,
+            "seq_cst FIFO mismatch for 10"
+        )) {
+        return false;
+    }
+
+    if (!check(
+            queue.try_pop(value) && value == 20,
+            "seq_cst FIFO mismatch for 20"
+        )) {
+        return false;
+    }
+
+    if (!check(
+            queue.try_pop(value) && value == 30,
+            "seq_cst FIFO mismatch for 30"
+        )) {
+        return false;
+    }
+
+    if (!check(
+            queue.try_pop(value) && value == 40,
+            "seq_cst FIFO mismatch for 40"
+        )) {
+        return false;
+    }
+
+    if (!check(
+            !queue.try_pop(value),
+            "seq_cst empty queue returned an item"
+        )) {
+        return false;
+    }
+
+    return true;
+}
+
 } // namespace
 
 
@@ -221,6 +302,10 @@ int main()
             )) {
             return 1;
         }
+    }
+
+    if (!test_seq_cst_queue()) {
+        return 1;
     }
 
     std::cout << "spsc ring buffer tests passed\n";

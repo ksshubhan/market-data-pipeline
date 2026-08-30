@@ -7,11 +7,16 @@
 #include <cstdint>
 #include <type_traits>
 
+enum class SpscMemoryOrder {
+    AcquireRelease,
+    SeqCst
+};
 
 template <
     typename T,
     std::size_t Capacity,
-    std::size_t Alignment = 128
+    std::size_t Alignment = 128,
+    SpscMemoryOrder Order = SpscMemoryOrder::AcquireRelease
 >
 class SpscRingBuffer {
     static_assert(Capacity > 0);
@@ -48,11 +53,11 @@ public:
     bool try_push(const T& value)
     {
         const std::uint64_t tail =
-            producer_.tail.load(std::memory_order_relaxed);
+            producer_.tail.load(kOwnLoadOrder);
 
         if (tail - producer_.cached_head == Capacity) {
             producer_.cached_head =
-                consumer_.head.load(std::memory_order_acquire);
+                consumer_.head.load(kCrossLoadOrder);
 
             if (tail - producer_.cached_head == Capacity) {
                 ++producer_.full_rejections;
@@ -62,10 +67,7 @@ public:
 
         buffer_[tail & kMask] = value;
 
-        producer_.tail.store(
-            tail + 1,
-            std::memory_order_release
-        );
+        producer_.tail.store(tail + 1, kPublishStoreOrder);
 
         return true;
     }
@@ -73,11 +75,11 @@ public:
     bool try_pop(T& value)
     {
         const std::uint64_t head =
-            consumer_.head.load(std::memory_order_relaxed);
+            consumer_.head.load(kOwnLoadOrder);
 
         if (consumer_.cached_tail - head == 0) {
             consumer_.cached_tail =
-                producer_.tail.load(std::memory_order_acquire);
+                producer_.tail.load(kCrossLoadOrder);
 
             if (consumer_.cached_tail - head == 0) {
                 return false;
@@ -86,10 +88,7 @@ public:
 
         value = buffer_[head & kMask];
 
-        consumer_.head.store(
-            head + 1,
-            std::memory_order_release
-        );
+        consumer_.head.store(head + 1, kPublishStoreOrder);
 
         return true;
     }
@@ -105,6 +104,21 @@ public:
     }
 
 private:
+    static constexpr std::memory_order kOwnLoadOrder =
+        Order == SpscMemoryOrder::SeqCst
+            ? std::memory_order_seq_cst
+            : std::memory_order_relaxed;
+
+    static constexpr std::memory_order kCrossLoadOrder =
+        Order == SpscMemoryOrder::SeqCst
+            ? std::memory_order_seq_cst
+            : std::memory_order_acquire;
+
+    static constexpr std::memory_order kPublishStoreOrder =
+        Order == SpscMemoryOrder::SeqCst
+            ? std::memory_order_seq_cst
+            : std::memory_order_release;
+
     static constexpr std::uint64_t kMask = Capacity - 1;
 
     struct alignas(Alignment) ProducerState {
