@@ -1,0 +1,23 @@
+Harness C valid acquire/release ThreadSanitizer validation
+
+spsc ring buffer tests passed
+spsc_tsan_exit=0
+
+dense_phase: passed
+logical_records: 100000000
+pushes_completed: 100000000
+pops_completed: 100000000
+full_rejections: 246873
+dropped_records: 0
+
+drop_phase: passed
+logical_records: 10000000
+pushes_completed: 8631837
+pops_completed: 8631837
+full_rejections: 1368163
+dropped_records: 1368163
+observed_gap_records: 1368163
+
+Harness C passed
+harness_c_tsan_exit=0
+ThreadSanitizer warnings: 0

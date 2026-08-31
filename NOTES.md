@@ -353,3 +353,14 @@ The valid acquire/release SPSC tests passed under ThreadSanitizer with exit stat
 The intentionally invalid C1 queue produced ThreadSanitizer data-race reports between the producer's slot write in `try_push()` and the consumer's slot read in `try_pop()`. The original instrumented run reported 10 warnings and terminated with exit status 134.
 
 The C1 oracle did not observe payload corruption during the TSan-instrumented run. This does not conflict with the native result: ThreadSanitizer instrumentation substantially changes execution timing. The native ARM64 run supplied observable mixed-generation tearing, while the TSan run independently confirmed the missing synchronisation creates a C++ data race.
+
+
+#### Harness C — ThreadSanitizer validation
+
+The valid acquire/release Harness C completed successfully under ThreadSanitizer.
+
+The dense phase transferred 100,000,000 records with full deterministic payload validation and no abandoned records. It encountered 246,873 temporary full-queue rejections, demonstrating that `full_rejections` is not equivalent to caller-owned `dropped_records` when rejected records are retried.
+
+The drop-oracle phase attempted 10,000,000 logical records. It successfully transferred 8,631,837 records and deliberately abandoned 1,368,163 rejected records. The consumer observed total sequence-gap width of exactly 1,368,163, matching `dropped_records`.
+
+No ThreadSanitizer warnings were reported. Harness C exited with status 0.
