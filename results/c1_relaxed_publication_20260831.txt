@@ -1,0 +1,16 @@
+C1 observable corruption detected
+expected_sequence: 3
+observed_sequence: 3
+expected_sequence_minus_capacity: 1
+field,expected,observed
+sequence,3,3
+replay_intended_send_ns,130,130
+capture_wall_time_ns,230,230
+event_time_ms,330,330
+transaction_time_ms,430,430
+bid_price,31,31
+ask_price,32,12
+bid_qty,33,13
+ask_qty,34,34
+symbol_id,1,1
+exit_status=1

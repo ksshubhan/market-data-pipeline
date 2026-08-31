@@ -40,3 +40,7 @@ add_executable(environment_probe
 add_executable(harness_a
     src/harness_a.cpp
 )
+
+add_executable(c1_relaxed_publication
+    src/c1_relaxed_publication.cpp
+)

@@ -325,3 +325,23 @@ A repeat or decrease in the consumer-observed sequence is also an unconditional 
 Observable corruption is not guaranteed to occur in any finite native run. ThreadSanitizer evidence will be collected separately in §8.0a Step 8.
 
 C1 is correctness evidence only. No throughput, handoffs/second, latency, or other performance number from this intentionally invalid implementation will be reported.
+
+#### C1 observed result
+
+The first native ARM64 C1 run produced observable corruption and exited with status 1.
+
+With queue capacity 2, the consumer expected sequence `N = 3`. The record's sequence and most payload fields belonged to sequence 3, but two fields belonged exactly to the previous generation of the same slot, `N - capacity = 1`:
+
+* `ask_price`: expected `32`, observed `12`
+* `bid_qty`: expected `33`, observed `13`
+
+Under the deterministic C1 payload encoding:
+
+* sequence 3 produces `ask_price = 32`, `bid_qty = 33`
+* sequence 1 produces `ask_price = 12`, `bid_qty = 13`
+
+The remaining checked fields matched sequence 3.
+
+This is a mixed-generation torn read of a reused ring slot, matching the failure signature predicted before the intentionally broken implementation was run.
+
+C1 remains intentionally invalid C++; no performance number is reported from this program.

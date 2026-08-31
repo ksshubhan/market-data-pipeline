@@ -9,7 +9,11 @@
 
 enum class SpscMemoryOrder {
     AcquireRelease,
-    SeqCst
+    SeqCst,
+
+    // C1 only: intentionally invalid C++.
+    // Removes the consumer acquire from producer publication.
+    C1BrokenRelaxedPublication
 };
 
 template <
@@ -57,7 +61,7 @@ public:
 
         if (tail - producer_.cached_head == Capacity) {
             producer_.cached_head =
-                consumer_.head.load(kCrossLoadOrder);
+                consumer_.head.load(kProducerCrossLoadOrder);
 
             if (tail - producer_.cached_head == Capacity) {
                 ++producer_.full_rejections;
@@ -79,7 +83,7 @@ public:
 
         if (consumer_.cached_tail - head == 0) {
             consumer_.cached_tail =
-                producer_.tail.load(kCrossLoadOrder);
+                producer_.tail.load(kConsumerCrossLoadOrder);
 
             if (consumer_.cached_tail - head == 0) {
                 return false;
@@ -109,10 +113,17 @@ private:
             ? std::memory_order_seq_cst
             : std::memory_order_relaxed;
 
-    static constexpr std::memory_order kCrossLoadOrder =
+    static constexpr std::memory_order kProducerCrossLoadOrder =
         Order == SpscMemoryOrder::SeqCst
             ? std::memory_order_seq_cst
             : std::memory_order_acquire;
+
+    static constexpr std::memory_order kConsumerCrossLoadOrder =
+        Order == SpscMemoryOrder::SeqCst
+            ? std::memory_order_seq_cst
+            : Order == SpscMemoryOrder::C1BrokenRelaxedPublication
+                ? std::memory_order_relaxed
+                : std::memory_order_acquire;
 
     static constexpr std::memory_order kPublishStoreOrder =
         Order == SpscMemoryOrder::SeqCst
