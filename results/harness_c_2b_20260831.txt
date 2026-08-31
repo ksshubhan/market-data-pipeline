@@ -1,0 +1,17 @@
+git_commit=11b081e0c344b2fffce1cb44079714f3e8cff169
+dense_iterations=2000000000
+dense_phase: passed
+logical_records: 2000000000
+pushes_completed: 2000000000
+pops_completed: 2000000000
+full_rejections: 120868755
+dropped_records: 0
+drop_phase: passed
+logical_records: 10000000
+pushes_completed: 2689306
+pops_completed: 2689306
+full_rejections: 7310694
+dropped_records: 7310694
+observed_gap_records: 7310694
+Harness C passed
+harness_c_exit=0

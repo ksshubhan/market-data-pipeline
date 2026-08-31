@@ -364,3 +364,21 @@ The dense phase transferred 100,000,000 records with full deterministic payload 
 The drop-oracle phase attempted 10,000,000 logical records. It successfully transferred 8,631,837 records and deliberately abandoned 1,368,163 rejected records. The consumer observed total sequence-gap width of exactly 1,368,163, matching `dropped_records`.
 
 No ThreadSanitizer warnings were reported. Harness C exited with status 0.
+
+
+#### Harness C — multi-billion native stress
+
+Harness C completed a native long-run correctness stress from commit `11b081e0c344b2fffce1cb44079714f3e8cff169`.
+
+The dense acquire/release phase transferred 2,000,000,000 records successfully:
+
+* 2,000,000,000 successful pushes
+* 2,000,000,000 successful pops
+* 120,868,755 temporary full-queue rejections
+* 0 dropped records
+
+All deterministic payload validation and dense sequence checks passed.
+
+The drop-oracle phase attempted 10,000,000 logical records. It transferred 2,689,306 records and deliberately abandoned 7,310,694 rejected records. The consumer observed total sequence-gap width of exactly 7,310,694, matching `dropped_records`.
+
+Harness C exited with status 0. No performance or latency number is reported from this correctness stress.
