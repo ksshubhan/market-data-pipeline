@@ -5,6 +5,9 @@
 #include <cstddef>
 #include <cstdint>
 #include <iostream>
+#include <cstdlib>
+#include <cerrno>
+#include <limits>
 #include <thread>
 
 namespace {
@@ -12,7 +15,7 @@ namespace {
 constexpr std::size_t kDenseCapacity = 1024;
 constexpr std::size_t kDropCapacity = 8;
 
-constexpr std::uint64_t kDenseIterations = 100'000'000;
+constexpr std::uint64_t kDefaultDenseIterations = 100'000'000;
 constexpr std::uint64_t kDropIterations = 10'000'000;
 constexpr std::uint64_t kForcedDrops = 32;
 
@@ -120,7 +123,7 @@ bool matches_expected(const Record& observed)
     return true;
 }
 
-bool run_dense_phase()
+bool run_dense_phase(std::uint64_t dense_iterations)
 {
     DenseQueue queue;
 
@@ -138,7 +141,7 @@ bool run_dense_phase()
 
         for (
             std::uint64_t expected_sequence = 0;
-            expected_sequence < kDenseIterations;
+            expected_sequence < dense_iterations;
             ++expected_sequence
         ) {
             Record observed{};
@@ -183,7 +186,7 @@ bool run_dense_phase()
 
         for (
             std::uint64_t sequence = 0;
-            sequence < kDenseIterations;
+            sequence < dense_iterations;
             ++sequence
         ) {
             const Record record =
@@ -214,8 +217,8 @@ bool run_dense_phase()
     }
 
     if (
-        pushes_completed != kDenseIterations ||
-        pops_completed != kDenseIterations
+        pushes_completed != dense_iterations ||
+        pops_completed != dense_iterations
     ) {
         std::cerr
             << "Harness C dense count failure\n"
@@ -230,7 +233,7 @@ bool run_dense_phase()
     std::cout
         << "dense_phase: passed\n"
         << "logical_records: "
-        << kDenseIterations << '\n'
+        << dense_iterations << '\n'
         << "pushes_completed: "
         << pushes_completed << '\n'
         << "pops_completed: "
@@ -548,9 +551,44 @@ bool run_drop_phase()
 
 } // namespace
 
-int main()
+int main(int argc, char* argv[])
 {
-    if (!run_dense_phase()) {
+    std::uint64_t dense_iterations =
+        kDefaultDenseIterations;
+
+    if (argc > 2) {
+        std::cerr
+            << "usage: harness_c [dense_iterations]\n";
+        return 1;
+    }
+
+    if (argc == 2) {
+        char* end = nullptr;
+
+        errno = 0;
+
+        const unsigned long long parsed =
+            std::strtoull(argv[1], &end, 10);
+
+        if (
+            end == argv[1] ||
+            *end != '\0' ||
+            argv[1][0] == '-' ||
+            errno == ERANGE ||
+            parsed == 0 ||
+            parsed >
+                std::numeric_limits<std::uint64_t>::max()
+        ) {
+            std::cerr
+                << "invalid dense_iterations\n";
+            return 1;
+        }
+
+        dense_iterations =
+            static_cast<std::uint64_t>(parsed);
+    }
+
+    if (!run_dense_phase(dense_iterations)) {
         return 1;
     }
 
