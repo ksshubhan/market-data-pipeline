@@ -44,3 +44,7 @@ add_executable(harness_a
 add_executable(c1_relaxed_publication
     src/c1_relaxed_publication.cpp
 )
+
+add_executable(harness_c
+    src/harness_c.cpp
+)
