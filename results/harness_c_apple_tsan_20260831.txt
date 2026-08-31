@@ -1,0 +1,26 @@
+Harness C AppleClang ThreadSanitizer validation
+
+compiler: AppleClang 21.0.0
+compiler_path: /Library/Developer/CommandLineTools/usr/bin/clang++
+
+spsc ring buffer tests passed
+apple_spsc_tsan_exit=0
+
+dense_phase: passed
+logical_records: 100000000
+pushes_completed: 100000000
+pops_completed: 100000000
+full_rejections: 96375
+dropped_records: 0
+
+drop_phase: passed
+logical_records: 10000000
+pushes_completed: 7650578
+pops_completed: 7650578
+full_rejections: 2349422
+dropped_records: 2349422
+observed_gap_records: 2349422
+
+Harness C passed
+apple_harness_c_tsan_exit=0
+ThreadSanitizer warnings: 0

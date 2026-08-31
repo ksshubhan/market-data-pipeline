@@ -382,3 +382,16 @@ All deterministic payload validation and dense sequence checks passed.
 The drop-oracle phase attempted 10,000,000 logical records. It transferred 2,689,306 records and deliberately abandoned 7,310,694 rejected records. The consumer observed total sequence-gap width of exactly 7,310,694, matching `dropped_records`.
 
 Harness C exited with status 0. No performance or latency number is reported from this correctness stress.
+
+
+#### Harness C — AppleClang ThreadSanitizer validation
+
+The valid acquire/release queue and Harness C were independently validated under AppleClang 21.0.0 ThreadSanitizer.
+
+The SPSC unit tests passed with exit status 0.
+
+Harness C transferred 100,000,000 dense records with full deterministic payload validation and zero dropped records. Its drop-oracle phase abandoned 2,349,422 records and observed total consumer sequence-gap width of exactly 2,349,422.
+
+No ThreadSanitizer warnings were reported and Harness C exited with status 0.
+
+Together with the Homebrew Clang 22.1.8 TSan run and the 2,000,000,000-record native stress, this completes the planned Harness C correctness evidence.
