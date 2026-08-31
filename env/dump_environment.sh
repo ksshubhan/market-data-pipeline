@@ -25,19 +25,22 @@ if [[ ! -x "$PROBE" ]]; then
     exit 1
 fi
 
+GIT_COMMIT="$(git -C "$ROOT_DIR" rev-parse HEAD)"
+
+if [[ -n "$(git -C "$ROOT_DIR" status --porcelain)" ]]; then
+    GIT_DIRTY="yes"
+else
+    GIT_DIRTY="no"
+fi
+
 {
     echo "=== measurement environment ==="
     echo "utc_timestamp: $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
     echo
 
     echo "=== repository ==="
-    echo "git_commit: $(git -C "$ROOT_DIR" rev-parse HEAD)"
-
-    if [[ -n "$(git -C "$ROOT_DIR" status --porcelain)" ]]; then
-        echo "git_dirty: yes"
-    else
-        echo "git_dirty: no"
-    fi
+    echo "git_commit: $GIT_COMMIT"
+    echo "git_dirty: $GIT_DIRTY"
 
     echo
     echo "=== hardware ==="
