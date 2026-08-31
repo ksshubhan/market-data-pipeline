@@ -345,3 +345,11 @@ The remaining checked fields matched sequence 3.
 This is a mixed-generation torn read of a reused ring slot, matching the failure signature predicted before the intentionally broken implementation was run.
 
 C1 remains intentionally invalid C++; no performance number is reported from this program.
+
+#### C1 ThreadSanitizer result
+
+The valid acquire/release SPSC tests passed under ThreadSanitizer with exit status 0 and no reported data races.
+
+The intentionally invalid C1 queue produced ThreadSanitizer data-race reports between the producer's slot write in `try_push()` and the consumer's slot read in `try_pop()`. The original instrumented run reported 10 warnings and terminated with exit status 134.
+
+The C1 oracle did not observe payload corruption during the TSan-instrumented run. This does not conflict with the native result: ThreadSanitizer instrumentation substantially changes execution timing. The native ARM64 run supplied observable mixed-generation tearing, while the TSan run independently confirmed the missing synchronisation creates a C++ data race.

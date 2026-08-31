@@ -1,0 +1,35 @@
+==================
+WARNING: ThreadSanitizer: data race (pid=10836)
+  Read of size 8 at 0x00016d7d6c00 by thread T2:
+    #0 SpscRingBuffer<Record, 2ul, 128ul, (SpscMemoryOrder)2>::try_pop(Record&) spsc_ring_buffer.hpp:93 (c1_relaxed_publication:arm64+0x100001fa0)
+    #1 main::$_1::operator()() const c1_relaxed_publication.cpp:176 (c1_relaxed_publication:arm64+0x100001fa0)
+    #2 std::__1::__invoke_result_impl<void, main::$_1>::type std::__1::__invoke[abi:nqe220108]<main::$_1>(main::$_1&&) invoke.h:90 (c1_relaxed_publication:arm64+0x100001fa0)
+    #3 void std::__1::__thread_execute[abi:nqe220108]<std::__1::unique_ptr<std::__1::__thread_struct, std::__1::default_delete<std::__1::__thread_struct>>, main::$_1, 0ul>(std::__1::tuple<std::__1::unique_ptr<std::__1::__thread_struct, std::__1::default_delete<std::__1::__thread_struct>>, main::$_1>&, std::__1::__integer_sequence<unsigned long, 0ul>) thread.h:161 (c1_relaxed_publication:arm64+0x100001fa0)
+    #4 void* std::__1::__thread_proxy[abi:nqe220108]<std::__1::tuple<std::__1::unique_ptr<std::__1::__thread_struct, std::__1::default_delete<std::__1::__thread_struct>>, main::$_1>>(void*) thread.h:169 (c1_relaxed_publication:arm64+0x100001fa0)
+
+  Previous write of size 8 at 0x00016d7d6c00 by thread T1:
+    #0 SpscRingBuffer<Record, 2ul, 128ul, (SpscMemoryOrder)2>::try_push(Record const&) spsc_ring_buffer.hpp:72 (c1_relaxed_publication:arm64+0x100001c00)
+    #1 main::$_0::operator()() const c1_relaxed_publication.cpp:159 (c1_relaxed_publication:arm64+0x100001c00)
+    #2 std::__1::__invoke_result_impl<void, main::$_0>::type std::__1::__invoke[abi:nqe220108]<main::$_0>(main::$_0&&) invoke.h:90 (c1_relaxed_publication:arm64+0x100001c00)
+    #3 void std::__1::__thread_execute[abi:nqe220108]<std::__1::unique_ptr<std::__1::__thread_struct, std::__1::default_delete<std::__1::__thread_struct>>, main::$_0, 0ul>(std::__1::tuple<std::__1::unique_ptr<std::__1::__thread_struct, std::__1::default_delete<std::__1::__thread_struct>>, main::$_0>&, std::__1::__integer_sequence<unsigned long, 0ul>) thread.h:161 (c1_relaxed_publication:arm64+0x100001c00)
+    #4 void* std::__1::__thread_proxy[abi:nqe220108]<std::__1::tuple<std::__1::unique_ptr<std::__1::__thread_struct, std::__1::default_delete<std::__1::__thread_struct>>, main::$_0>>(void*) thread.h:169 (c1_relaxed_publication:arm64+0x100001c00)
+
+  Location is stack of main thread.
+
+  Thread T2 (tid=532155, running) created by main thread at:
+    #0 pthread_create <null> (libclang_rt.tsan_osx_dynamic.dylib:arm64+0x31d84)
+    #1 std::__1::__libcpp_thread_create[abi:nqe220108](_opaque_pthread_t**, void* (*)(void*), void*) pthread.h:182 (c1_relaxed_publication:arm64+0x100001428)
+    #2 std::__1::thread::thread[abi:nqe220108]<main::$_1, 0>(main::$_1&&) thread.h:218 (c1_relaxed_publication:arm64+0x100001428)
+    #3 std::__1::thread::thread[abi:nqe220108]<main::$_1, 0>(main::$_1&&) thread.h:209 (c1_relaxed_publication:arm64+0x100001428)
+    #4 main c1_relaxed_publication.cpp:167 (c1_relaxed_publication:arm64+0x100001428)
+
+  Thread T1 (tid=532154, running) created by main thread at:
+    #0 pthread_create <null> (libclang_rt.tsan_osx_dynamic.dylib:arm64+0x31d84)
+    #1 std::__1::__libcpp_thread_create[abi:nqe220108](_opaque_pthread_t**, void* (*)(void*), void*) pthread.h:182 (c1_relaxed_publication:arm64+0x100001398)
+    #2 std::__1::thread::thread[abi:nqe220108]<main::$_0, 0>(main::$_0&&) thread.h:218 (c1_relaxed_publication:arm64+0x100001398)
+    #3 std::__1::thread::thread[abi:nqe220108]<main::$_0, 0>(main::$_0&&) thread.h:209 (c1_relaxed_publication:arm64+0x100001398)
+    #4 main c1_relaxed_publication.cpp:148 (c1_relaxed_publication:arm64+0x100001398)
+
+SUMMARY: ThreadSanitizer: data race spsc_ring_buffer.hpp:93 in SpscRingBuffer<Record, 2ul, 128ul, (SpscMemoryOrder)2>::try_pop(Record&)
+==================
+exit_status=134
