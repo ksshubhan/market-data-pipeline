@@ -44,8 +44,13 @@ struct Record {
     std::uint16_t symbol_id;
 
     // Explicit tail bytes so Record has no implicit uninitialised padding.
-    // These must be zeroed by the producer.
-    std::uint8_t reserved[6];
+    // The default member initialiser zeroes them even under default
+    // initialisation (`Record r;`), so they can never be read as garbage
+    // by a memcmp, hash, or byte-wise copy of a Record. It does not force
+    // the other 74 bytes to be zeroed, so the hot-path cost noted in §7.3
+    // — value-initialising a fresh Record per iteration and immediately
+    // overwriting most of it — is not reintroduced.
+    std::uint8_t reserved[6]{};
 };
 
 

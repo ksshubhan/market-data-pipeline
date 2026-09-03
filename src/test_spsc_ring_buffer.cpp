@@ -1,6 +1,8 @@
 #include "spsc_ring_buffer.hpp"
 #include "record.hpp"
+#include <atomic>
 #include <cstdint>
+
 #include <iostream>
 #include <thread>
 
@@ -268,18 +270,33 @@ int main()
 
         SpscRingBuffer<std::uint64_t, 1024> queue;
 
-        bool consumer_ok = true;
+        // A correctness failure must terminate this test, not deadlock it.
+        // If the consumer returns early on a mismatch and the producer has
+        // no way to learn that, the producer spins for ever on a full
+        // queue and producer.join() never returns — so the test's failure
+        // mode becomes a hang rather than a report.
+        std::atomic<bool> failed{false};
 
         std::thread consumer([&] {
             for (std::uint64_t expected = 0; expected < kCount; ++expected) {
                 std::uint64_t value = 0;
 
                 while (!queue.try_pop(value)) {
-                    // Test harness retries on empty.
+                    // Test harness retries on empty. The producer cannot
+                    // exit early while the consumer is still running, so
+                    // this loop needs no escape hatch.
                 }
 
                 if (value != expected) {
-                    consumer_ok = false;
+                    std::cerr
+                        << "FAIL: two-thread SPSC handoff corrupted FIFO"
+                           " order at index "
+                        << expected
+                        << ", observed "
+                        << value
+                        << '\n';
+
+                    failed.store(true, std::memory_order_release);
                     return;
                 }
             }
@@ -289,6 +306,9 @@ int main()
             for (std::uint64_t value = 0; value < kCount; ++value) {
                 while (!queue.try_push(value)) {
                     // Test harness retries on full.
+                    if (failed.load(std::memory_order_acquire)) {
+                        return;
+                    }
                 }
             }
         });
@@ -296,10 +316,7 @@ int main()
         producer.join();
         consumer.join();
 
-        if (!check(
-                consumer_ok,
-                "two-thread SPSC handoff corrupted FIFO order"
-            )) {
+        if (failed.load(std::memory_order_acquire)) {
             return 1;
         }
     }

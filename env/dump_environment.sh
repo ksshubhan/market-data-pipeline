@@ -27,7 +27,15 @@ fi
 
 GIT_COMMIT="$(git -C "$ROOT_DIR" rev-parse HEAD)"
 
-if [[ -n "$(git -C "$ROOT_DIR" status --porcelain)" ]]; then
+# Dumps from earlier runs are untracked evidence files, not working-tree
+# changes that affect a build, so they are excluded from the dirty check.
+# Without this, a second dump in the same session reports a false dirty
+# state caused by the first. Anything else untracked — a new source file
+# included — still counts as dirty.
+GIT_STATUS="$(git -C "$ROOT_DIR" status --porcelain -- \
+    ':(exclude)env/measurement_environment_*.txt')"
+
+if [[ -n "$GIT_STATUS" ]]; then
     GIT_DIRTY="yes"
 else
     GIT_DIRTY="no"
@@ -49,6 +57,16 @@ fi
     sysctl_value hw.perflevel1.logicalcpu
     sysctl_value hw.l1dcachesize
     sysctl_value hw.l2cachesize
+
+    # Per-core-type cache geometry. hw.l1dcachesize reports a single
+    # figure on a heterogeneous SoC, which is not enough to reason about
+    # A2 and A3: those experiments are about cache-line separation and
+    # slot working-set size, and P-core and E-core figures differ.
+    sysctl_value hw.perflevel0.l1dcachesize
+    sysctl_value hw.perflevel0.l2cachesize
+    sysctl_value hw.perflevel1.l1dcachesize
+    sysctl_value hw.perflevel1.l2cachesize
+    
     sysctl_value hw.memsize
     sysctl_value machdep.cpu.brand_string
 

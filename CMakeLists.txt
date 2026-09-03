@@ -48,3 +48,17 @@ add_executable(c1_relaxed_publication
 add_executable(harness_c
     src/harness_c.cpp
 )
+
+# One command that runs every correctness test: `ctest --test-dir <build>`.
+# Part of the fix for the disarmed parser suite: the defect survived partly
+# because there was no single invocation whose exit status covered the tests.
+#
+# None of these targets uses assert(), so none of them depends on NDEBUG
+# being absent. Harness C and C1 are excluded deliberately: Harness C is a
+# multi-minute stress run, and C1 is intentionally invalid C++ whose
+# non-deterministic failure is evidence rather than a regression signal.
+enable_testing()
+
+add_test(NAME parser COMMAND test_parser)
+add_test(NAME mutex_queue COMMAND test_mutex_queue)
+add_test(NAME spsc_ring_buffer COMMAND test_spsc_ring_buffer)
