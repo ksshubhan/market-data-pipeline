@@ -395,3 +395,39 @@ Harness C transferred 100,000,000 dense records with full deterministic payload 
 No ThreadSanitizer warnings were reported and Harness C exited with status 0.
 
 Together with the Homebrew Clang 22.1.8 TSan run and the 2,000,000,000-record native stress, this completes the planned Harness C correctness evidence.
+### Dataset regenerated from a clean tree
+
+The BTCUSDT futures `.bin` was originally produced at commit `faafd2c`
+with the dirty flag set. That commit is "Timer calibration"; the converter
+source does not exist in it, so the header could not identify the code
+that wrote the file. Regenerated at `936f13f0606ea807dd29d2072e2aa40dda964695`
+with `dirty=0`.
+
+Conversion took 4.98 s and produced 769,971,616 bytes, matching
+`64 + 13,749,492 x 56` exactly.
+
+`tools/validate_capture.py` re-run over the new file: all 13,749,492
+records validated in 56.5 s.
+
+Two things fell out of the regeneration.
+
+**Determinism verified rather than asserted.** `cmp -i 64` between the old
+and new files reports no difference: 13,749,492 records byte-identical
+across two converter runs six days apart on different commits. §7.6
+requires every header field to be a pure function of (input file, build) —
+no parse timestamp, no hostname, no UUID — and this is that constraint
+checked on the real dataset. It also closes §7.5's outstanding
+byte-identical-output check. The only bytes that differ are `flags` at
+offset 25 and `git_commit` at offset 42.
+
+**Warming cost measured cold and warm.** `CaptureFile::warm()` takes
+1.595 s on a file not in the page cache and 0.049 s on one written
+minutes earlier — the difference is roughly 47,000 demand-paging faults
+at the verified 16 KiB page size. A harness B run must assume the cold
+figure unless the dataset was just touched.
+
+The lap-1/lap-2 ratio was 1.196 cold and 1.222 warm. §6.4a says laps that
+differ materially mean warming failed, but after `warm()` the residual
+~20% is cache warming on the first pass, not paging, and no amount of
+page-touching removes it. The check should treat ~1.2x as the floor; a
+threshold of 1.0 would have sent us chasing a phantom.
