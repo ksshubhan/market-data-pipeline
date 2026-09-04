@@ -37,6 +37,11 @@ add_executable(measure_pacing_floor
     src/replay_schedule.cpp
 )
 
+add_executable(test_replay_producer
+    src/test_replay_producer.cpp
+    src/replay_schedule.cpp
+)
+
 add_executable(verify_capture
     src/verify_capture.cpp
     src/capture_file.cpp
@@ -89,3 +94,4 @@ add_test(NAME mutex_queue COMMAND test_mutex_queue)
 add_test(NAME spsc_ring_buffer COMMAND test_spsc_ring_buffer)
 add_test(NAME capture_file COMMAND test_capture_file)
 add_test(NAME replay_schedule COMMAND test_replay_schedule)
+add_test(NAME replay_producer COMMAND test_replay_producer)

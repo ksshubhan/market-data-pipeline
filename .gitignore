@@ -8,6 +8,5 @@ __pycache__/
 compile_commands.json
 *.dSYM/
 .cache/
-results/*.csv
 captures/
 /convert_capture

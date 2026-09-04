@@ -8,6 +8,8 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <span>
 #include <vector>
 
@@ -101,6 +103,49 @@ inline void spin_until(std::uint64_t deadline_ns) noexcept
 
 namespace replay_detail {
 
+// §8.0b: where a requirement can be turned into a check that fails
+// loudly, it should be. assert() is not that check here — both CMake
+// presets define NDEBUG, which is what left the parser suite compiling
+// to nothing from 28 Aug, so anything that must hold at -O2 has to abort
+// on its own terms rather than borrowing <cassert>'s.
+//
+// Abort rather than throw or return a status. All three preconditions
+// below are harness-setup errors, not runtime conditions a sweep could
+// legitimately meet and skip: if the schedule does not match the slice
+// there is no datapoint to discard, there is a bug in the driver. A
+// status flag is only loud if every caller reads it, which is precisely
+// the property that failed for assert under NDEBUG.
+//
+// This replaces a silent early return. The previous form returned a
+// default-constructed ReplayStats, so a driver that did not inspect
+// `pushed` read a run that never happened as a run that delivered
+// nothing.
+[[noreturn]] inline void fail(const char* message) noexcept
+{
+    std::fprintf(stderr, "replay_producer: precondition failed: %s\n", message);
+    std::fflush(stderr);
+    std::abort();
+}
+
+
+[[noreturn]] inline void fail_size(
+    const char* message,
+    std::size_t required,
+    std::size_t actual
+) noexcept
+{
+    std::fprintf(
+        stderr,
+        "replay_producer: precondition failed: %s (need %zu, got %zu)\n",
+        message,
+        required,
+        actual
+    );
+    std::fflush(stderr);
+    std::abort();
+}
+
+
 inline std::uint64_t percentile(
     std::vector<std::uint32_t>& sorted_scratch,
     double fraction
@@ -155,17 +200,38 @@ ReplayStats run_replay(
     std::vector<std::uint32_t>& lag_ns
 )
 {
+    // Checked before anything is recorded, so a failure cannot leave
+    // half-populated stats behind. See replay_detail::fail.
+    if (slice.empty()) {
+        replay_detail::fail("slice must not be empty");
+    }
+
+    if (schedule.intended_offset_ns.size() != slice.size()) {
+        replay_detail::fail_size(
+            "schedule length must equal slice length",
+            slice.size(),
+            schedule.intended_offset_ns.size()
+        );
+    }
+
+    // The third member of the same family, and the one that was missing:
+    // the loop below writes lag_ns[i] for every i in [0, slice.size()),
+    // and prepare_lag_buffer takes its count through a separate call. An
+    // unchecked mismatch is an out-of-bounds write on the hot path.
+    if (lag_ns.size() < slice.size()) {
+        replay_detail::fail_size(
+            "lag buffer must be at least slice length",
+            slice.size(),
+            lag_ns.size()
+        );
+    }
+
     ReplayStats stats;
 
     stats.backwards_steps = schedule.backwards_steps;
     stats.slice_start = slice_start;
     stats.slice_length = slice.size();
     stats.first_sequence = first_sequence;
-
-    if (slice.empty() ||
-        schedule.intended_offset_ns.size() != slice.size()) {
-        return stats;
-    }
 
     // §7.3: symbol_id and reserved are invariant for a run, so they are
     // set once on the producer's stack Record. Value-initialising a fresh
