@@ -91,6 +91,25 @@ inline std::uint64_t replay_now_ns() noexcept
 // rejected rather than quietly wrong; and there is a floor on achievable
 // offered rate, which measure_pacing_floor exists to find before the
 // sweep is designed.
+//
+// The isb is a speculation barrier, not a spin hint, and the distinction
+// is the whole reason it is not the `yield` used by MutexQueue's spin.
+// Reads of the generic timer can be reordered ahead of program order, so
+// without a barrier the loop can observe a counter value staler than the
+// point at which it is read; the isb in the loop body precedes the next
+// iteration's read and bounds that staleness. `yield` is a scheduling
+// hint to the core and would do nothing for it.
+//
+// The cost is real and is not hidden: an isb flushes the pipeline, so it
+// adds to how precisely the deadline can be detected, and it is inside
+// the ~20 ns/record figure measure_pacing_floor reports. That figure is
+// therefore the floor *of this loop*, not of the machine.
+//
+// Untested against the alternatives, deliberately. The floor is ~50M
+// records/s and B1's range is 100k-1M/s, 50-500x below it, so the choice
+// cannot reach any reported result. Changing it would also invalidate
+// the pacing floor already measured, for a variable no datapoint depends
+// on.
 inline void spin_until(std::uint64_t deadline_ns) noexcept
 {
     while (replay_now_ns() < deadline_ns) {
@@ -251,6 +270,24 @@ ReplayStats run_replay(
 
         spin_until(intended);
 
+        // Sampled *before* the push, and the ordering is load-bearing
+        // rather than incidental.
+        //
+        // §6.4's gate asks one question: was the rate on the x-axis
+        // actually delivered? That is a question about whether the
+        // producer reached its slot on time, not about what the queue
+        // then cost. Sampling after the push would fold queue cost into
+        // the gate, and it would do so unequally: MutexQueue::try_push
+        // under contention costs tens of microseconds where the SPSC
+        // ring costs tens of nanoseconds, so at high offered rates the
+        // baseline arm would fail its own p99 lag gate on its own queue
+        // cost. §6.4 would then discard precisely the datapoints where
+        // the mutex tail appears — the gate would delete B1's headline.
+        //
+        // Nothing is hidden by this. A slow push delays the next
+        // iteration's spin, so its cost surfaces as the *following*
+        // record's lag. The producer is charged for being late, once,
+        // against the record it was actually late for.
         const std::uint64_t actual = replay_now_ns();
 
         // §7.3a: assigned *before* the push attempt. A rejected record
@@ -277,6 +314,13 @@ ReplayStats run_replay(
 
         const std::uint64_t lag = actual - intended;
 
+        // Saturates at ~4.29 s. A lag that large means the run is
+        // already void by the p99 gate many times over, so the clamp
+        // cannot corrupt a datapoint that would otherwise be reported.
+        // It is uncounted, which is the one silent thing left in this
+        // loop; adding a counter would cost a branch per record inside
+        // the measured window to record an event that implies the
+        // datapoint is discarded anyway.
         lag_ns[i] = static_cast<std::uint32_t>(
             std::min<std::uint64_t>(lag, 0xffffffffull)
         );
