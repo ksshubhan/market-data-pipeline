@@ -27,6 +27,11 @@ add_executable(test_capture_file
     src/capture_file.cpp
 )
 
+add_executable(verify_capture
+    src/verify_capture.cpp
+    src/capture_file.cpp
+)
+
 add_executable(test_mutex_queue
     src/test_mutex_queue.cpp
 )
