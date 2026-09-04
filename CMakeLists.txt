@@ -32,6 +32,11 @@ add_executable(test_replay_schedule
     src/replay_schedule.cpp
 )
 
+add_executable(measure_pacing_floor
+    src/measure_pacing_floor.cpp
+    src/replay_schedule.cpp
+)
+
 add_executable(verify_capture
     src/verify_capture.cpp
     src/capture_file.cpp
