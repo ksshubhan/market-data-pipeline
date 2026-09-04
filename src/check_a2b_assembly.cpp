@@ -42,11 +42,65 @@ void store_loop_16(SeparatedCounters<16>& counters, std::uint64_t count)
 }
 
 
+// A3b's loops carry an empty asm with a memory clobber, so they cannot
+// be elided outright, and the harness checks the writer's final value.
+// They are disassembled anyway for the same reason as above: the checks
+// catch a loop that vanished, not one that was partially unrolled or
+// vectorised into fewer, wider accesses. The three strides must also
+// produce the same loop body, or the arms are not comparable.
+
+__attribute__((noinline))
+void slot_write_80(AlignedSlot<8>& slot, std::uint64_t count)
+{
+    slot_write_loop(slot, count);
+}
+
+__attribute__((noinline))
+void slot_write_128(AlignedSlot<128>& slot, std::uint64_t count)
+{
+    slot_write_loop(slot, count);
+}
+
+__attribute__((noinline))
+std::uint64_t slot_read_80(const AlignedSlot<8>& slot, std::uint64_t count)
+{
+    return slot_read_loop(slot, count);
+}
+
+__attribute__((noinline))
+std::uint64_t slot_read_128(
+    const AlignedSlot<128>& slot,
+    std::uint64_t count
+)
+{
+    return slot_read_loop(slot, count);
+}
+
+
 int main()
 {
     SeparatedCounters<64> counters{};
 
     store_loop_64(counters, 4);
 
-    return counters.first.load(std::memory_order_relaxed) == 4 ? 0 : 1;
+    if (counters.first.load(std::memory_order_relaxed) != 4) {
+        return 1;
+    }
+
+    SlotPair<8> narrow_pair{};
+    SlotPair<128> wide_pair{};
+
+    AlignedSlot<8>& narrow = narrow_pair.slots[1];
+    AlignedSlot<128>& wide = wide_pair.slots[1];
+
+    slot_write_80(narrow, 4);
+    slot_write_128(wide, 4);
+
+    if (narrow.record.sequence != 3 || wide.record.sequence != 3) {
+        return 1;
+    }
+
+    return (slot_read_80(narrow, 4) + slot_read_128(wide, 4)) == 0
+        ? 1
+        : 0;
 }

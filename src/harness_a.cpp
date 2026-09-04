@@ -38,7 +38,10 @@ enum class Experiment {
 
     // A2b: isolated false-sharing microbenchmark. Same separation
     // question as A2 with the queue removed entirely.
-    A2b
+    A2b,
+
+    // A3b: slot-level false sharing, again with the queue removed.
+    A3b
 };
 
 enum class Arm {
@@ -66,7 +69,13 @@ enum class Arm {
     SharedLine16,
     FalseSharing64,
     FalseSharing128,
-    FalseSharing256
+    FalseSharing256,
+
+    // A3b. Stride between adjacent ring slots. Record stays 80 bytes in
+    // every arm; the slot wrapper is what is over-aligned (§6.5 A3).
+    SlotStride80,
+    SlotStride128,
+    SlotStride256
 };
 
 const char* arm_name(Arm arm)
@@ -96,6 +105,12 @@ const char* arm_name(Arm arm)
         return "false_sharing_128";
     case Arm::FalseSharing256:
         return "false_sharing_256";
+    case Arm::SlotStride80:
+        return "slot_stride_80";
+    case Arm::SlotStride128:
+        return "slot_stride_128";
+    case Arm::SlotStride256:
+        return "slot_stride_256";
     }
 
     std::abort();
@@ -187,6 +202,8 @@ const char* experiment_name(Experiment experiment)
         return "a2";
     case Experiment::A2b:
         return "a2b";
+    case Experiment::A3b:
+        return "a3b";
     }
 
     std::abort();
@@ -199,7 +216,7 @@ bool parse_provenance(int argc, char* argv[], Provenance& out)
             << "Usage:\n"
             << "  " << argv[0]
             << " <git-commit-40-hex> <dirty:0|1>"
-            << " <experiment:a1|a2|a2b>\n";
+            << " <experiment:a1|a2|a2b|a3b>\n";
 
         return false;
     }
@@ -230,8 +247,11 @@ bool parse_provenance(int argc, char* argv[], Provenance& out)
         out.experiment = Experiment::A2;
     } else if (experiment_text == "a2b") {
         out.experiment = Experiment::A2b;
+    } else if (experiment_text == "a3b") {
+        out.experiment = Experiment::A3b;
     } else {
-        std::cerr << "error: experiment must be a1, a2 or a2b\n";
+        std::cerr
+            << "error: experiment must be a1, a2, a2b or a3b\n";
         return false;
     }
 
@@ -494,6 +514,96 @@ SeparationRunResult run_separation_once()
     };
 }
 
+constexpr std::uint64_t kSlotOpsPerThread = 5'000'000;
+
+template <std::size_t Alignment>
+SeparationRunResult run_slot_once()
+{
+    // Two adjacent slots in a 256-aligned pair, so the geometry is the
+    // same on every run. The writer touches only slots[1] and the reader
+    // only slots[0], so they never access the same object.
+    SlotPair<Alignment> pair{};
+
+    const std::ptrdiff_t observed =
+        reinterpret_cast<const std::uint8_t*>(&pair.slots[1]) -
+        reinterpret_cast<const std::uint8_t*>(&pair.slots[0]);
+
+    if (observed !=
+            static_cast<std::ptrdiff_t>(sizeof(AlignedSlot<Alignment>)) ||
+        reinterpret_cast<std::uintptr_t>(&pair.slots[0]) % 256 != 0) {
+        std::cerr << "slot layout incorrect\n";
+        std::abort();
+    }
+
+    std::atomic<bool> start{false};
+    std::atomic<int> ready{0};
+    std::atomic<std::uint64_t> reader_sink{0};
+
+    std::uint64_t writer_end_ns = 0;
+    std::uint64_t reader_end_ns = 0;
+
+    QosResult writer_qos = QosResult::not_attempted;
+    QosResult reader_qos = QosResult::not_attempted;
+
+    std::thread reader([&] {
+        reader_qos = request_user_interactive_qos();
+        ready.fetch_add(1, std::memory_order_release);
+
+        while (!start.load(std::memory_order_acquire)) {
+        }
+
+        const std::uint64_t sink =
+            slot_read_loop(pair.slots[0], kSlotOpsPerThread);
+
+        reader_end_ns = now_ns();
+
+        reader_sink.store(sink, std::memory_order_relaxed);
+    });
+
+    std::thread writer([&] {
+        writer_qos = request_user_interactive_qos();
+        ready.fetch_add(1, std::memory_order_release);
+
+        while (!start.load(std::memory_order_acquire)) {
+        }
+
+        slot_write_loop(pair.slots[1], kSlotOpsPerThread);
+
+        writer_end_ns = now_ns();
+    });
+
+    while (ready.load(std::memory_order_acquire) != 2) {
+    }
+
+    const std::uint64_t begin_ns = now_ns();
+
+    start.store(true, std::memory_order_release);
+
+    writer.join();
+    reader.join();
+
+    // The writer's last iteration is observable, so the slot it wrote
+    // must hold the final sequence. This catches a sunk or elided store
+    // loop; the disassembly check catches a partially elided one.
+    if (pair.slots[1].record.sequence != kSlotOpsPerThread - 1) {
+        std::cerr << "slot writer final value incorrect\n";
+        std::abort();
+    }
+
+    const std::uint64_t end_ns =
+        writer_end_ns > reader_end_ns ? writer_end_ns : reader_end_ns;
+
+    const double elapsed_seconds =
+        static_cast<double>(end_ns - begin_ns) / 1'000'000'000.0;
+
+    return SeparationRunResult{
+        2 * kSlotOpsPerThread,
+        elapsed_seconds,
+        observed,
+        combine_qos(writer_qos, reader_qos)
+    };
+}
+
 template <
     std::memory_order LoadOrder,
     std::memory_order StoreOrder
@@ -616,6 +726,14 @@ int main(int argc, char* argv[])
             Arm::FalseSharing256
         };
         break;
+
+    case Experiment::A3b:
+        arms = {
+            Arm::SlotStride80,
+            Arm::SlotStride128,
+            Arm::SlotStride256
+        };
+        break;
     }
 
     std::vector<TrialResult> results;
@@ -628,7 +746,9 @@ int main(int argc, char* argv[])
         << "iterations_per_trial: "
         << (provenance.experiment == Experiment::A2b
                 ? 2 * kSeparationStoresPerThread
-                : kIterations) << '\n'
+                : provenance.experiment == Experiment::A3b
+                    ? 2 * kSlotOpsPerThread
+                    : kIterations) << '\n'
         << "rounds: " << kRounds << '\n'
         << "experiment: "
         << experiment_name(provenance.experiment) << '\n'
@@ -639,6 +759,12 @@ int main(int argc, char* argv[])
         << sizeof(Separation128Queue) << '\n'
         << "sizeof_queue_separation_256: "
         << sizeof(Separation256Queue) << '\n'
+        << "sizeof_slot_stride_80: "
+        << sizeof(AlignedSlot<8>) << '\n'
+        << "sizeof_slot_stride_128: "
+        << sizeof(AlignedSlot<128>) << '\n'
+        << "sizeof_slot_stride_256: "
+        << sizeof(AlignedSlot<256>) << '\n'
         << "shuffle_seed: " << kShuffleSeed << '\n';
 
     // §5: a P-core bias hint, not pinning. Every trial verifies the class
@@ -799,6 +925,57 @@ int main(int argc, char* argv[])
 
                 trial.seconds = result.seconds;
                 trial.full_rejections = result.full_rejections;
+                break;
+            }
+
+            case Arm::SlotStride80: {
+                const SeparationRunResult result = run_slot_once<8>();
+
+                if (result.stores_completed != 2 * kSlotOpsPerThread) {
+                    std::cerr << "invalid slot_stride_80 run\n";
+                    return 1;
+                }
+
+                if (!check_qos(arm_name(arm), result.qos)) {
+                    return 1;
+                }
+
+                trial.seconds = result.seconds;
+                trial.operations = result.stores_completed;
+                break;
+            }
+
+            case Arm::SlotStride128: {
+                const SeparationRunResult result = run_slot_once<128>();
+
+                if (result.stores_completed != 2 * kSlotOpsPerThread) {
+                    std::cerr << "invalid slot_stride_128 run\n";
+                    return 1;
+                }
+
+                if (!check_qos(arm_name(arm), result.qos)) {
+                    return 1;
+                }
+
+                trial.seconds = result.seconds;
+                trial.operations = result.stores_completed;
+                break;
+            }
+
+            case Arm::SlotStride256: {
+                const SeparationRunResult result = run_slot_once<256>();
+
+                if (result.stores_completed != 2 * kSlotOpsPerThread) {
+                    std::cerr << "invalid slot_stride_256 run\n";
+                    return 1;
+                }
+
+                if (!check_qos(arm_name(arm), result.qos)) {
+                    return 1;
+                }
+
+                trial.seconds = result.seconds;
+                trial.operations = result.stores_completed;
                 break;
             }
 
