@@ -14,6 +14,7 @@
 #include <random>
 #include <vector>
 #include <cstdlib>
+#include <memory>
 #include <string>
 #include <ctime>
 
@@ -44,7 +45,10 @@ enum class Experiment {
     A3b,
 
     // A4: cached vs uncached opposite index, in the real queue.
-    A4
+    A4,
+
+    // A4b: the same question with the retry loop removed by construction.
+    A4b
 };
 
 enum class Arm {
@@ -83,7 +87,12 @@ enum class Arm {
     // A4. Both acquire-release at the default separation; the only
     // difference is whether the opposite index is cached.
     QueueCachedIndex,
-    QueueUncachedIndex
+    QueueUncachedIndex,
+
+    // A4b. Same two variants, measured producer-only against a ring
+    // larger than the run.
+    ProducerBoundCached,
+    ProducerBoundUncached
 };
 
 const char* arm_name(Arm arm)
@@ -123,6 +132,10 @@ const char* arm_name(Arm arm)
         return "queue_cached_index";
     case Arm::QueueUncachedIndex:
         return "queue_uncached_index";
+    case Arm::ProducerBoundCached:
+        return "producer_bound_cached";
+    case Arm::ProducerBoundUncached:
+        return "producer_bound_uncached";
     }
 
     std::abort();
@@ -190,6 +203,64 @@ using UncachedIndexQueue = SpscRingBuffer<
 // at once.
 static_assert(sizeof(CachedIndexQueue) == sizeof(UncachedIndexQueue));
 
+
+// A4b. A4 could not answer the question: its arms differed 9x in
+// full_rejections and throughput correlated positively with rejections
+// within each arm (r = +0.61 cached, +0.80 uncached), so the 18%
+// difference was producer/consumer balance rather than mechanism. The
+// crossover trial settles it — the cached arm's one high-rejection round
+// produced 39.04 M/s, the fastest trial in either arm.
+//
+// A4b removes the retry loop by construction rather than gating on it.
+// The ring holds more slots than the run pushes, so try_push can never
+// return false and full_rejections is zero in both arms by arithmetic,
+// not by luck.
+//
+// That also isolates the variable exactly. The cached producer's
+// fullness test (tail - cached_head == Capacity) is never true, so it
+// never enters the slow path and performs zero cross-core loads for the
+// whole run. The uncached producer performs one acquire load of the
+// consumer's index per push. The difference is 0 against
+// kA4bIterations cross-core loads with nothing else varying.
+//
+// Only the producer thread is timed. Since it never rejects, no property
+// of the consumer's speed can enter the number — but the consumer is
+// running concurrently and storing head_ throughout, so the contention
+// the uncached load pays for is real.
+//
+// Cost of the approach: at 65536 slots the ring is 5.2 MB, so it is
+// L2-resident rather than L1 and the payload store is dearer than at
+// capacity 1024. That is a constant added to both arms. It dilutes the
+// relative effect; it cannot confound it.
+constexpr std::size_t kA4bCapacity = 65536;
+constexpr std::uint64_t kA4bIterations = 65000;
+
+static_assert(
+    kA4bIterations < kA4bCapacity,
+    "A4b requires a ring larger than the run so the producer cannot fill it"
+);
+
+using ProducerBoundCachedQueue = SpscRingBuffer<
+    Record,
+    kA4bCapacity,
+    128,
+    SpscMemoryOrder::AcquireRelease,
+    SpscIndexCaching::Cached
+>;
+
+using ProducerBoundUncachedQueue = SpscRingBuffer<
+    Record,
+    kA4bCapacity,
+    128,
+    SpscMemoryOrder::AcquireRelease,
+    SpscIndexCaching::Uncached
+>;
+
+static_assert(
+    sizeof(ProducerBoundCachedQueue) ==
+    sizeof(ProducerBoundUncachedQueue)
+);
+
 struct TrialResult {
     std::size_t round;
     Arm arm;
@@ -242,6 +313,8 @@ const char* experiment_name(Experiment experiment)
         return "a3b";
     case Experiment::A4:
         return "a4";
+    case Experiment::A4b:
+        return "a4b";
     }
 
     std::abort();
@@ -254,7 +327,7 @@ bool parse_provenance(int argc, char* argv[], Provenance& out)
             << "Usage:\n"
             << "  " << argv[0]
             << " <git-commit-40-hex> <dirty:0|1>"
-            << " <experiment:a1|a2|a2b|a3b|a4>\n";
+            << " <experiment:a1|a2|a2b|a3b|a4|a4b>\n";
 
         return false;
     }
@@ -289,9 +362,12 @@ bool parse_provenance(int argc, char* argv[], Provenance& out)
         out.experiment = Experiment::A3b;
     } else if (experiment_text == "a4") {
         out.experiment = Experiment::A4;
+    } else if (experiment_text == "a4b") {
+        out.experiment = Experiment::A4b;
     } else {
         std::cerr
-            << "error: experiment must be a1, a2, a2b, a3b or a4\n";
+            << "error: experiment must be a1, a2, a2b, a3b, a4"
+               " or a4b\n";
         return false;
     }
 
@@ -554,6 +630,113 @@ SeparationRunResult run_separation_once()
     };
 }
 
+// A4b runner. Unlike run_once this times the producer thread alone and
+// treats any rejection as a hard failure rather than a diagnostic: with
+// kA4bIterations < kA4bCapacity a rejection is arithmetically impossible,
+// so one occurring means the arm is not what it claims to be.
+template <typename Queue>
+RunResult run_producer_bound_once()
+{
+    // Heap rather than stack: 5.2 MB exceeds the default thread stack.
+    auto queue = std::make_unique<Queue>();
+
+    std::atomic<bool> start{false};
+    std::atomic<int> ready{0};
+
+    std::uint64_t pushes_completed = 0;
+    std::uint64_t pops_completed = 0;
+
+    std::uint64_t producer_begin_ns = 0;
+    std::uint64_t producer_end_ns = 0;
+
+    QosResult producer_qos = QosResult::not_attempted;
+    QosResult consumer_qos = QosResult::not_attempted;
+
+    Record input{};
+
+    std::thread consumer([&] {
+        consumer_qos = request_user_interactive_qos();
+        ready.fetch_add(1, std::memory_order_release);
+
+        Record output{};
+
+        while (!start.load(std::memory_order_acquire)) {
+        }
+
+        for (std::uint64_t expected = 0;
+             expected < kA4bIterations;) {
+            if (!queue->try_pop(output)) {
+                continue;
+            }
+
+            if (output.sequence != expected) {
+                std::cerr
+                    << "sequence mismatch: expected "
+                    << expected
+                    << ", got "
+                    << output.sequence
+                    << '\n';
+
+                std::abort();
+            }
+
+            ++expected;
+            ++pops_completed;
+        }
+    });
+
+    std::thread producer([&] {
+        producer_qos = request_user_interactive_qos();
+        ready.fetch_add(1, std::memory_order_release);
+
+        while (!start.load(std::memory_order_acquire)) {
+        }
+
+        // The producer times itself. It cannot be blocked by the
+        // consumer, so this interval is kA4bIterations pushes and
+        // nothing else.
+        producer_begin_ns = now_ns();
+
+        for (std::uint64_t sequence = 0;
+             sequence < kA4bIterations;
+             ++sequence) {
+
+            input.sequence = sequence;
+
+            if (!queue->try_push(input)) {
+                std::cerr
+                    << "A4b producer was rejected, which the capacity "
+                       "makes impossible\n";
+                std::abort();
+            }
+
+            ++pushes_completed;
+        }
+
+        producer_end_ns = now_ns();
+    });
+
+    while (ready.load(std::memory_order_acquire) != 2) {
+    }
+
+    start.store(true, std::memory_order_release);
+
+    producer.join();
+    consumer.join();
+
+    const double elapsed_seconds =
+        static_cast<double>(producer_end_ns - producer_begin_ns) /
+        1'000'000'000.0;
+
+    return RunResult{
+        pushes_completed,
+        pops_completed,
+        queue->full_rejections(),
+        elapsed_seconds,
+        combine_qos(producer_qos, consumer_qos)
+    };
+}
+
 constexpr std::uint64_t kSlotOpsPerThread = 5'000'000;
 
 template <std::size_t Alignment>
@@ -781,6 +964,13 @@ int main(int argc, char* argv[])
             Arm::QueueUncachedIndex
         };
         break;
+
+    case Experiment::A4b:
+        arms = {
+            Arm::ProducerBoundCached,
+            Arm::ProducerBoundUncached
+        };
+        break;
     }
 
     std::vector<TrialResult> results;
@@ -795,7 +985,9 @@ int main(int argc, char* argv[])
                 ? 2 * kSeparationStoresPerThread
                 : provenance.experiment == Experiment::A3b
                     ? 2 * kSlotOpsPerThread
-                    : kIterations) << '\n'
+                    : provenance.experiment == Experiment::A4b
+                        ? kA4bIterations
+                        : kIterations) << '\n'
         << "rounds: " << kRounds << '\n'
         << "experiment: "
         << experiment_name(provenance.experiment) << '\n'
@@ -816,6 +1008,10 @@ int main(int argc, char* argv[])
         << sizeof(CachedIndexQueue) << '\n'
         << "sizeof_queue_uncached_index: "
         << sizeof(UncachedIndexQueue) << '\n'
+        << "a4b_capacity: " << kA4bCapacity << '\n'
+        << "a4b_iterations: " << kA4bIterations << '\n'
+        << "sizeof_a4b_queue: "
+        << sizeof(ProducerBoundCachedQueue) << '\n'
         << "shuffle_seed: " << kShuffleSeed << '\n';
 
     // §5: a P-core bias hint, not pinning. Every trial verifies the class
@@ -976,6 +1172,52 @@ int main(int argc, char* argv[])
 
                 trial.seconds = result.seconds;
                 trial.full_rejections = result.full_rejections;
+                break;
+            }
+
+            case Arm::ProducerBoundCached: {
+                const RunResult result =
+                    run_producer_bound_once<
+                        ProducerBoundCachedQueue
+                    >();
+
+                if (result.pushes_completed != kA4bIterations ||
+                    result.pops_completed != kA4bIterations ||
+                    result.full_rejections != 0) {
+                    std::cerr
+                        << "invalid producer_bound_cached run\n";
+                    return 1;
+                }
+
+                if (!check_qos(arm_name(arm), result.qos)) {
+                    return 1;
+                }
+
+                trial.seconds = result.seconds;
+                trial.operations = kA4bIterations;
+                break;
+            }
+
+            case Arm::ProducerBoundUncached: {
+                const RunResult result =
+                    run_producer_bound_once<
+                        ProducerBoundUncachedQueue
+                    >();
+
+                if (result.pushes_completed != kA4bIterations ||
+                    result.pops_completed != kA4bIterations ||
+                    result.full_rejections != 0) {
+                    std::cerr
+                        << "invalid producer_bound_uncached run\n";
+                    return 1;
+                }
+
+                if (!check_qos(arm_name(arm), result.qos)) {
+                    return 1;
+                }
+
+                trial.seconds = result.seconds;
+                trial.operations = kA4bIterations;
                 break;
             }
 
