@@ -22,6 +22,11 @@ add_executable(convert_capture
     src/parser.cpp
 )
 
+add_executable(test_capture_file
+    src/test_capture_file.cpp
+    src/capture_file.cpp
+)
+
 add_executable(test_mutex_queue
     src/test_mutex_queue.cpp
 )
@@ -67,3 +72,4 @@ enable_testing()
 add_test(NAME parser COMMAND test_parser)
 add_test(NAME mutex_queue COMMAND test_mutex_queue)
 add_test(NAME spsc_ring_buffer COMMAND test_spsc_ring_buffer)
+add_test(NAME capture_file COMMAND test_capture_file)

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "record.hpp"
+
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -104,3 +106,131 @@ static_assert(offsetof(BinaryHeader, flags) == 25);
 static_assert(offsetof(BinaryHeader, symbol) == 26);
 static_assert(offsetof(BinaryHeader, git_commit) == 42);
 static_assert(offsetof(BinaryHeader, reserved) == 62);
+
+// ---------------------------------------------------------------------
+// CaptureFile — §7.6a
+// ---------------------------------------------------------------------
+//
+// A validator with an accessor, not an abstraction layer.
+//
+// The reason it exists is that something must validate the header exactly
+// once, at open, and that something must not be the replay producer's hot
+// loop. If the validation lives inline in the producer, the next tool
+// that opens a .bin will skip it and §7.6's entire 64-byte header will
+// have bought nothing.
+//
+// Deliberately absent, per §7.6a: no read_next(), no iterator, no virtual
+// dispatch over stream types, no caching. The producer takes the span and
+// indexes it directly — a span index is a multiply-add, where a
+// read_next() is a call with state to maintain on a loop that runs 13.7
+// million times. Depth is out of parser scope (§7.1), so StreamType::depth
+// is a recognised value that gets rejected, not a case to dispatch on.
+// mmap is already backed by the page cache, so a cache here would be a
+// second copy of what the kernel is holding.
+
+#include <cstdio>
+#include <span>
+#include <string_view>
+
+
+enum class CaptureFileError {
+    none,
+
+    // File-level failures.
+    cannot_open,
+    cannot_stat,
+    file_smaller_than_header,
+    mmap_failed,
+
+    // Header failures, checked in the order listed in open(). magic and
+    // format_version come first: a field checked after the fields it
+    // protects is decoration.
+    bad_magic,
+    unsupported_format_version,
+    bad_header_size,
+    record_size_mismatch,
+    bad_scale_exponent,
+    unknown_market_type,
+    unknown_stream_type,
+    unsupported_stream_type,
+    unknown_flags,
+    reserved_not_zero,
+    symbol_not_terminated,
+    symbol_mismatch,
+
+    // record_count still holds the poison placeholder, so the writer did
+    // not reach its seek-back-and-patch step. The file is incomplete
+    // rather than empty, and §7.6 chose UINT64_MAX precisely so the two
+    // are distinguishable.
+    unfinalized_record_count,
+
+    record_count_overflow,
+    file_size_mismatch,
+
+    // The mapped record array is not suitably aligned. Cannot happen with
+    // a page-aligned mapping and a 64-byte header, but §7.6a says assert
+    // it rather than rely on it.
+    records_misaligned
+};
+
+
+const char* capture_file_error_name(CaptureFileError error) noexcept;
+
+
+class CaptureFile {
+public:
+    CaptureFile() = default;
+    ~CaptureFile();
+
+    CaptureFile(const CaptureFile&) = delete;
+    CaptureFile& operator=(const CaptureFile&) = delete;
+
+    CaptureFile(CaptureFile&& other) noexcept;
+    CaptureFile& operator=(CaptureFile&& other) noexcept;
+
+    // Validates everything and either fills `out` or returns an error.
+    // `expected_symbol` is supplied by the caller and never inferred from
+    // the filename — filename inference is how a BTC dataset ends up
+    // labelled ETHW (§7.6).
+    static CaptureFileError open(
+        const char* path,
+        std::string_view expected_symbol,
+        CaptureFile& out
+    ) noexcept;
+
+    bool is_open() const noexcept { return base_ != nullptr; }
+
+    const BinaryHeader& header() const noexcept;
+
+    std::span<const CaptureRecord> records() const noexcept;
+
+    // §6.4a: the BTC dataset is ~734 MiB and is not in the page cache on
+    // first traversal, so the producer would take demand-paging faults
+    // inside the measured window. Warming lives here because it needs the
+    // page size and the mapping, both of which this object owns; deriving
+    // them again in the producer is how a hard-coded 4096 gets in.
+    //
+    // The touched value is accumulated and returned rather than
+    // discarded. A loop that touches pages and throws the result away is
+    // dead code at -O2 and clang will delete it.
+    std::uint64_t warm() const noexcept;
+
+    // Verified once at open and cross-checked between the two APIs.
+    // Apple Silicon is 16 KiB, not 4 KiB (§7.6a).
+    std::size_t page_size() const noexcept { return page_size_; }
+    bool page_size_agrees() const noexcept { return page_size_agrees_; }
+
+private:
+    void reset() noexcept;
+
+    const std::uint8_t* base_ = nullptr;
+    std::size_t mapped_size_ = 0;
+    std::size_t page_size_ = 0;
+    bool page_size_agrees_ = false;
+};
+
+
+// §7.6a trap 2: the record array begins at header_size, so that offset
+// must be a multiple of CaptureRecord's alignment for the mapped records
+// to be suitably aligned off a page-aligned base.
+static_assert(kCaptureHeaderSize % alignof(CaptureRecord) == 0);
