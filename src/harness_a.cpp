@@ -22,14 +22,36 @@ constexpr std::uint64_t kIterations = 10'000'000;
 static_assert(kIterations % 2 == 0);
 
 constexpr std::size_t kCapacity = 1024;
-constexpr std::size_t kRounds = 10;
+// Raised from 10 for Step 9. The A1 rerun showed queue_seq_cst
+// scattering across 22.6-27.0 M/s with no explanation from rejection
+// count, round order or shuffle position, so the medians for A2-A4 need
+// more trials behind them. 20 rounds costs about 35 seconds per run.
+constexpr std::size_t kRounds = 20;
+
+enum class Experiment {
+    // A1a atomic-only orderings plus A1b queue orderings.
+    A1,
+
+    // A2: producer/consumer index separation, 64 vs 128 vs 256 bytes.
+    A2
+};
 
 enum class Arm {
     AtomicRelaxed,
     AtomicAcquireRelease,
     AtomicSeqCst,
     QueueAcquireRelease,
-    QueueSeqCst
+    QueueSeqCst,
+
+    // A2. Acquire-release throughout; only the separation differs, so the
+    // slot array is byte-identical across the three arms and there is no
+    // working-set confound. The 64-byte arm is the one under test: this
+    // machine has 128-byte hardware lines (hw.cachelinesize), so padding
+    // each index block to 64 leaves both blocks inside one line and the
+    // false sharing is real rather than hypothetical.
+    QueueSeparation64,
+    QueueSeparation128,
+    QueueSeparation256
 };
 
 const char* arm_name(Arm arm)
@@ -45,6 +67,12 @@ const char* arm_name(Arm arm)
         return "queue_acquire_release";
     case Arm::QueueSeqCst:
         return "queue_seq_cst";
+    case Arm::QueueSeparation64:
+        return "queue_separation_64";
+    case Arm::QueueSeparation128:
+        return "queue_separation_128";
+    case Arm::QueueSeparation256:
+        return "queue_separation_256";
     }
 
     std::abort();
@@ -62,6 +90,30 @@ using SeqCstQueue = SpscRingBuffer<
     kCapacity,
     128,
     SpscMemoryOrder::SeqCst
+>;
+
+// A2 arms. Separation128 is the same instantiation as
+// AcquireReleaseQueue; it is named separately so the results file records
+// which experiment produced the row.
+using Separation64Queue = SpscRingBuffer<
+    Record,
+    kCapacity,
+    64,
+    SpscMemoryOrder::AcquireRelease
+>;
+
+using Separation128Queue = SpscRingBuffer<
+    Record,
+    kCapacity,
+    128,
+    SpscMemoryOrder::AcquireRelease
+>;
+
+using Separation256Queue = SpscRingBuffer<
+    Record,
+    kCapacity,
+    256,
+    SpscMemoryOrder::AcquireRelease
 >;
 
 struct TrialResult {
@@ -94,15 +146,28 @@ struct RunResult {
 struct Provenance {
     std::string git_commit;
     bool dirty;
+    Experiment experiment;
 };
+
+const char* experiment_name(Experiment experiment)
+{
+    switch (experiment) {
+    case Experiment::A1:
+        return "a1";
+    case Experiment::A2:
+        return "a2";
+    }
+
+    std::abort();
+}
 
 bool parse_provenance(int argc, char* argv[], Provenance& out)
 {
-    if (argc != 3) {
+    if (argc != 4) {
         std::cerr
             << "Usage:\n"
             << "  " << argv[0]
-            << " <git-commit-40-hex> <dirty:0|1>\n";
+            << " <git-commit-40-hex> <dirty:0|1> <experiment:a1|a2>\n";
 
         return false;
     }
@@ -122,6 +187,17 @@ bool parse_provenance(int argc, char* argv[], Provenance& out)
 
     if (dirty_text != "0" && dirty_text != "1") {
         std::cerr << "error: dirty flag must be either 0 or 1\n";
+        return false;
+    }
+
+    const std::string experiment_text = argv[3];
+
+    if (experiment_text == "a1") {
+        out.experiment = Experiment::A1;
+    } else if (experiment_text == "a2") {
+        out.experiment = Experiment::A2;
+    } else {
+        std::cerr << "error: experiment must be a1 or a2\n";
         return false;
     }
 
@@ -359,13 +435,27 @@ int main(int argc, char* argv[])
 
     std::mt19937 rng{kShuffleSeed};
 
-    std::array<Arm, 5> arms{
-        Arm::AtomicRelaxed,
-        Arm::AtomicAcquireRelease,
-        Arm::AtomicSeqCst,
-        Arm::QueueAcquireRelease,
-        Arm::QueueSeqCst
-    };
+    std::vector<Arm> arms;
+
+    switch (provenance.experiment) {
+    case Experiment::A1:
+        arms = {
+            Arm::AtomicRelaxed,
+            Arm::AtomicAcquireRelease,
+            Arm::AtomicSeqCst,
+            Arm::QueueAcquireRelease,
+            Arm::QueueSeqCst
+        };
+        break;
+
+    case Experiment::A2:
+        arms = {
+            Arm::QueueSeparation64,
+            Arm::QueueSeparation128,
+            Arm::QueueSeparation256
+        };
+        break;
+    }
 
     std::vector<TrialResult> results;
     results.reserve(kRounds * arms.size());
@@ -376,7 +466,15 @@ int main(int argc, char* argv[])
         << "utc_timestamp: " << utc_timestamp() << '\n'
         << "iterations_per_trial: " << kIterations << '\n'
         << "rounds: " << kRounds << '\n'
+        << "experiment: "
+        << experiment_name(provenance.experiment) << '\n'
         << "queue_capacity: " << kCapacity << '\n'
+        << "sizeof_queue_separation_64: "
+        << sizeof(Separation64Queue) << '\n'
+        << "sizeof_queue_separation_128: "
+        << sizeof(Separation128Queue) << '\n'
+        << "sizeof_queue_separation_256: "
+        << sizeof(Separation256Queue) << '\n'
         << "shuffle_seed: " << kShuffleSeed << '\n';
 
     // §5: a P-core bias hint, not pinning. Every trial verifies the class
@@ -489,6 +587,63 @@ int main(int argc, char* argv[])
                 if (result.pushes_completed != kIterations ||
                     result.pops_completed != kIterations) {
                     std::cerr << "invalid queue_seq_cst run\n";
+                    return 1;
+                }
+
+                if (!check_qos(arm_name(arm), result.qos)) {
+                    return 1;
+                }
+
+                trial.seconds = result.seconds;
+                trial.full_rejections = result.full_rejections;
+                break;
+            }
+
+            case Arm::QueueSeparation64: {
+                const RunResult result =
+                    run_once<Separation64Queue>();
+
+                if (result.pushes_completed != kIterations ||
+                    result.pops_completed != kIterations) {
+                    std::cerr << "invalid queue_separation_64 run\n";
+                    return 1;
+                }
+
+                if (!check_qos(arm_name(arm), result.qos)) {
+                    return 1;
+                }
+
+                trial.seconds = result.seconds;
+                trial.full_rejections = result.full_rejections;
+                break;
+            }
+
+            case Arm::QueueSeparation128: {
+                const RunResult result =
+                    run_once<Separation128Queue>();
+
+                if (result.pushes_completed != kIterations ||
+                    result.pops_completed != kIterations) {
+                    std::cerr << "invalid queue_separation_128 run\n";
+                    return 1;
+                }
+
+                if (!check_qos(arm_name(arm), result.qos)) {
+                    return 1;
+                }
+
+                trial.seconds = result.seconds;
+                trial.full_rejections = result.full_rejections;
+                break;
+            }
+
+            case Arm::QueueSeparation256: {
+                const RunResult result =
+                    run_once<Separation256Queue>();
+
+                if (result.pushes_completed != kIterations ||
+                    result.pops_completed != kIterations) {
+                    std::cerr << "invalid queue_separation_256 run\n";
                     return 1;
                 }
 
