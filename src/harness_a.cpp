@@ -228,12 +228,14 @@ static_assert(sizeof(CachedIndexQueue) == sizeof(UncachedIndexQueue));
 // running concurrently and storing head_ throughout, so the contention
 // the uncached load pays for is real.
 //
-// Cost of the approach: at 65536 slots the ring is 5.2 MB, so it is
-// L2-resident rather than L1 and the payload store is dearer than at
-// capacity 1024. That is a constant added to both arms. It dilutes the
-// relative effect; it cannot confound it.
-constexpr std::size_t kA4bCapacity = 65536;
-constexpr std::uint64_t kA4bIterations = 65000;
+// Cost of the approach: at 1048576 slots the ring is 80 MB, so it is
+// DRAM-resident and the payload store is dearer than at capacity 1024.
+// That is a constant added to both arms. It dilutes the relative effect;
+// it cannot confound it. The larger run buys a measured window of tens of
+// milliseconds rather than two, which is what the first A4b run needed —
+// its cached arm had an IQR of 42.4% at 65,000 iterations.
+constexpr std::size_t kA4bCapacity = 1048576;
+constexpr std::uint64_t kA4bIterations = 1000000;
 
 static_assert(
     kA4bIterations < kA4bCapacity,
