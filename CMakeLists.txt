@@ -42,6 +42,10 @@ add_executable(test_replay_producer
     src/replay_schedule.cpp
 )
 
+add_executable(measure_condvar_wakeup
+    src/measure_condvar_wakeup.cpp
+)
+
 add_executable(verify_capture
     src/verify_capture.cpp
     src/capture_file.cpp
