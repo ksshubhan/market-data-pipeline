@@ -1,0 +1,51 @@
+--- A2b store loop, one stlr per iteration, all four separations ---
+
+0000000100000c7c <__Z13store_loop_16R17SeparatedCountersILm16EEy>:
+100000c7c: b40000c1    	cbz	x1, 0x100000c94 <__Z13store_loop_16R17SeparatedCountersILm16EEy+0x18>
+100000c80: 52800028    	mov	w8, #0x1                ; =1
+100000c84: c89ffc08    	stlr	x8, [x0]
+100000c88: 91000508    	add	x8, x8, #0x1
+100000c8c: f1000421    	subs	x1, x1, #0x1
+100000c90: 54ffffa1    	b.ne	0x100000c84 <__Z13store_loop_16R17SeparatedCountersILm16EEy+0x8>
+100000c94: d65f03c0    	ret
+0000000100000c28 <__Z13store_loop_64R17SeparatedCountersILm64EEy>:
+100000c28: b40000c1    	cbz	x1, 0x100000c40 <__Z13store_loop_64R17SeparatedCountersILm64EEy+0x18>
+100000c2c: 52800028    	mov	w8, #0x1                ; =1
+100000c30: c89ffc08    	stlr	x8, [x0]
+100000c34: 91000508    	add	x8, x8, #0x1
+100000c38: f1000421    	subs	x1, x1, #0x1
+100000c3c: 54ffffa1    	b.ne	0x100000c30 <__Z13store_loop_64R17SeparatedCountersILm64EEy+0x8>
+100000c40: d65f03c0    	ret
+100000cd4: 97ffffd5    	bl	0x100000c28 <__Z13store_loop_64R17SeparatedCountersILm64EEy>
+100000cd8: f94003e8    	ldr	x8, [sp]
+100000cdc: f100111f    	cmp	x8, #0x4
+100000ce0: 1a9f07e0    	cset	w0, ne
+100000ce4: f940efe8    	ldr	x8, [sp, #0x1d8]
+100000ce8: 90000029    	adrp	x9, 0x100004000 <___stack_chk_guard+0x100004000>
+100000cec: f9400529    	ldr	x9, [x9, #0x8]
+100000cf0: f9400129    	ldr	x9, [x9]
+100000cf4: eb08013f    	cmp	x9, x8
+100000cf8: 540000a1    	b.ne	0x100000d0c <_main+0x74>
+100000cfc: d10043bf    	sub	sp, x29, #0x10
+100000d00: a9417bfd    	ldp	x29, x30, [sp, #0x10]
+100000d04: a8c26ffc    	ldp	x28, x27, [sp], #0x20
+100000d08: d65f03c0    	ret
+0000000100000c44 <__Z14store_loop_128R17SeparatedCountersILm128EEy>:
+100000c44: b40000c1    	cbz	x1, 0x100000c5c <__Z14store_loop_128R17SeparatedCountersILm128EEy+0x18>
+100000c48: 52800028    	mov	w8, #0x1                ; =1
+100000c4c: c89ffc08    	stlr	x8, [x0]
+100000c50: 91000508    	add	x8, x8, #0x1
+100000c54: f1000421    	subs	x1, x1, #0x1
+100000c58: 54ffffa1    	b.ne	0x100000c4c <__Z14store_loop_128R17SeparatedCountersILm128EEy+0x8>
+100000c5c: d65f03c0    	ret
+0000000100000c60 <__Z14store_loop_256R17SeparatedCountersILm256EEy>:
+100000c60: b40000c1    	cbz	x1, 0x100000c78 <__Z14store_loop_256R17SeparatedCountersILm256EEy+0x18>
+100000c64: 52800028    	mov	w8, #0x1                ; =1
+100000c68: c89ffc08    	stlr	x8, [x0]
+100000c6c: 91000508    	add	x8, x8, #0x1
+100000c70: f1000421    	subs	x1, x1, #0x1
+100000c74: 54ffffa1    	b.ne	0x100000c68 <__Z14store_loop_256R17SeparatedCountersILm256EEy+0x8>
+100000c78: d65f03c0    	ret
+
+--- total stlr instructions in binary (expect 4, one per loop) ---
+4

@@ -1,6 +1,7 @@
 #include "record.hpp"
 #include "spsc_ring_buffer.hpp"
 #include "measurement_thread.hpp"
+#include "false_sharing.hpp"
 
 #include <atomic>
 #include <time.h>
@@ -389,20 +390,9 @@ RunResult run_once()
 // consumer publishes head_ the same way on every pop. Those unconditional
 // stores are what would false-share, not the conditional cross-loads.
 //
-// The struct is always 256-aligned so the first counter sits on a line
-// boundary in every arm; only the distance to the second counter varies.
-template <std::size_t Separation>
-struct alignas(256) SeparatedCounters {
-    static_assert(
-        Separation >= 16,
-        "Separation must leave room for the first counter"
-    );
-
-    std::atomic<std::uint64_t> first{0};
-    std::uint8_t padding[Separation - sizeof(std::atomic<std::uint64_t>)]{};
-    std::atomic<std::uint64_t> second{0};
-};
-
+// SeparatedCounters and separation_store_loop live in
+// false_sharing.hpp so that check_a2b_assembly.cpp disassembles the same
+// code this harness runs.
 struct SeparationRunResult {
     std::uint64_t stores_completed;
     double seconds;
@@ -449,11 +439,10 @@ SeparationRunResult run_separation_once()
         while (!start.load(std::memory_order_acquire)) {
         }
 
-        for (std::uint64_t i = 0;
-             i < kSeparationStoresPerThread;
-             ++i) {
-            counters.second.store(i + 1, std::memory_order_release);
-        }
+        separation_store_loop(
+            counters.second,
+            kSeparationStoresPerThread
+        );
 
         second_end_ns = now_ns();
     });
@@ -465,11 +454,10 @@ SeparationRunResult run_separation_once()
         while (!start.load(std::memory_order_acquire)) {
         }
 
-        for (std::uint64_t i = 0;
-             i < kSeparationStoresPerThread;
-             ++i) {
-            counters.first.store(i + 1, std::memory_order_release);
-        }
+        separation_store_loop(
+            counters.first,
+            kSeparationStoresPerThread
+        );
 
         first_end_ns = now_ns();
     });
