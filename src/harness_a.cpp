@@ -1,5 +1,6 @@
 #include "record.hpp"
 #include "spsc_ring_buffer.hpp"
+#include "measurement_thread.hpp"
 
 #include <atomic>
 #include <time.h>
@@ -12,6 +13,8 @@
 #include <random>
 #include <vector>
 #include <cstdlib>
+#include <string>
+#include <ctime>
 
 namespace {
 
@@ -71,6 +74,7 @@ struct TrialResult {
 struct AtomicRunResult {
     std::uint64_t handoffs_completed;
     double seconds;
+    QosResult qos;
 };
 
 struct RunResult {
@@ -78,11 +82,90 @@ struct RunResult {
     std::uint64_t pops_completed;
     std::uint64_t full_rejections;
     double seconds;
+    QosResult qos;
 };
+
+// Provenance is supplied by the caller rather than queried at runtime,
+// matching convert_capture (§7.6): the results file must describe the
+// build that produced it, not the state of the working tree at some later
+// moment. Emitting it into the results file itself means the artifact is
+// self-describing — the environment dump is still committed alongside,
+// but the pairing becomes checkable rather than assumed by timestamp.
+struct Provenance {
+    std::string git_commit;
+    bool dirty;
+};
+
+bool parse_provenance(int argc, char* argv[], Provenance& out)
+{
+    if (argc != 3) {
+        std::cerr
+            << "Usage:\n"
+            << "  " << argv[0]
+            << " <git-commit-40-hex> <dirty:0|1>\n";
+
+        return false;
+    }
+
+    const std::string commit = argv[1];
+
+    if (commit.size() != 40 ||
+        commit.find_first_not_of("0123456789abcdef") !=
+            std::string::npos) {
+        std::cerr
+            << "error: git commit must be 40 lowercase hex characters\n";
+
+        return false;
+    }
+
+    const std::string dirty_text = argv[2];
+
+    if (dirty_text != "0" && dirty_text != "1") {
+        std::cerr << "error: dirty flag must be either 0 or 1\n";
+        return false;
+    }
+
+    out.git_commit = commit;
+    out.dirty = (dirty_text == "1");
+
+    return true;
+}
+
+std::string utc_timestamp()
+{
+    const std::time_t now = std::time(nullptr);
+
+    std::tm utc{};
+    gmtime_r(&now, &utc);
+
+    char buffer[32] = {};
+    std::strftime(buffer, sizeof(buffer), "%Y-%m-%dT%H:%M:%SZ", &utc);
+
+    return std::string(buffer);
+}
 
 std::uint64_t now_ns() noexcept
 {
     return clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
+}
+
+// A trial whose QoS class did not apply is not the trial being reported:
+// §5's P-core bias is a stated part of the measurement conditions, so a
+// silent fallback would put an unmitigated run in the results file.
+bool check_qos(const char* arm, QosResult qos)
+{
+    if (qos == QosResult::applied) {
+        return true;
+    }
+
+    std::cerr
+        << "QoS not applied for "
+        << arm
+        << ": "
+        << qos_result_name(qos)
+        << '\n';
+
+    return false;
 }
 
 template <typename Queue>
@@ -92,14 +175,26 @@ RunResult run_once()
 
     std::atomic<bool> start{false};
 
+    // Both threads apply their QoS class and then announce readiness. The
+    // clock does not start until both have done so, so the
+    // pthread_set_qos_class_self_np call cannot land inside the measured
+    // window.
+    std::atomic<int> ready{0};
+
     std::uint64_t pushes_completed = 0;
     std::uint64_t pops_completed = 0;
     std::uint64_t end_ns = 0;
+
+    QosResult producer_qos = QosResult::not_attempted;
+    QosResult consumer_qos = QosResult::not_attempted;
 
     Record input{};
     input.sequence = 0;
 
     std::thread consumer([&] {
+        consumer_qos = request_user_interactive_qos();
+        ready.fetch_add(1, std::memory_order_release);
+
         Record output{};
 
         while (!start.load(std::memory_order_acquire)) {
@@ -129,6 +224,9 @@ RunResult run_once()
     });
 
     std::thread producer([&] {
+        producer_qos = request_user_interactive_qos();
+        ready.fetch_add(1, std::memory_order_release);
+
         while (!start.load(std::memory_order_acquire)) {
         }
 
@@ -146,6 +244,9 @@ RunResult run_once()
         }
     });
 
+    while (ready.load(std::memory_order_acquire) != 2) {
+    }
+
     const std::uint64_t begin_ns = now_ns();
 
     start.store(true, std::memory_order_release);
@@ -160,7 +261,8 @@ RunResult run_once()
         pushes_completed,
         pops_completed,
         queue.full_rejections(),
-        elapsed_seconds
+        elapsed_seconds,
+        combine_qos(producer_qos, consumer_qos)
     };
 }
 
@@ -172,10 +274,17 @@ AtomicRunResult run_atomic_once()
 {
     std::atomic<std::uint64_t> counter{0};
     std::atomic<bool> start{false};
+    std::atomic<int> ready{0};
 
     std::uint64_t end_ns = 0;
 
+    QosResult producer_qos = QosResult::not_attempted;
+    QosResult consumer_qos = QosResult::not_attempted;
+
     std::thread consumer([&] {
+        consumer_qos = request_user_interactive_qos();
+        ready.fetch_add(1, std::memory_order_release);
+
         while (!start.load(std::memory_order_acquire)) {
         }
 
@@ -192,6 +301,9 @@ AtomicRunResult run_atomic_once()
     });
 
     std::thread producer([&] {
+        producer_qos = request_user_interactive_qos();
+        ready.fetch_add(1, std::memory_order_release);
+
         while (!start.load(std::memory_order_acquire)) {
         }
 
@@ -204,6 +316,9 @@ AtomicRunResult run_atomic_once()
             counter.store(expected + 1, StoreOrder);
         }
     });
+
+    while (ready.load(std::memory_order_acquire) != 2) {
+    }
 
     const std::uint64_t begin_ns = now_ns();
 
@@ -223,14 +338,21 @@ AtomicRunResult run_atomic_once()
 
     return AtomicRunResult{
         kIterations,
-        elapsed_seconds
+        elapsed_seconds,
+        combine_qos(producer_qos, consumer_qos)
     };
 }
 
 } // namespace
 
-int main()
+int main(int argc, char* argv[])
 {
+    Provenance provenance{};
+
+    if (!parse_provenance(argc, argv, provenance)) {
+        return 1;
+    }
+
     constexpr std::uint32_t kShuffleSeed = 0xA1A1A1A1u;
 
     std::cout << std::setprecision(17);
@@ -249,9 +371,19 @@ int main()
     results.reserve(kRounds * arms.size());
 
     std::cout
-        << "shuffle_seed: "
-        << kShuffleSeed
-        << '\n';
+        << "git_commit: " << provenance.git_commit << '\n'
+        << "git_dirty: " << (provenance.dirty ? "yes" : "no") << '\n'
+        << "utc_timestamp: " << utc_timestamp() << '\n'
+        << "iterations_per_trial: " << kIterations << '\n'
+        << "rounds: " << kRounds << '\n'
+        << "queue_capacity: " << kCapacity << '\n'
+        << "shuffle_seed: " << kShuffleSeed << '\n';
+
+    // §5: a P-core bias hint, not pinning. Every trial verifies the class
+    // was actually applied and aborts the run otherwise, so reaching the
+    // end of this file means all 50 trials ran under it.
+    std::cout
+        << "qos_class: user_interactive\n";
 
     std::cout
         << "round,arm,seconds,completed_handoffs_per_second,"
@@ -281,6 +413,10 @@ int main()
                     return 1;
                 }
 
+                if (!check_qos(arm_name(arm), result.qos)) {
+                    return 1;
+                }
+
                 trial.seconds = result.seconds;
                 break;
             }
@@ -295,6 +431,10 @@ int main()
                 if (result.handoffs_completed != kIterations) {
                     std::cerr
                         << "invalid atomic_acquire_release run\n";
+                    return 1;
+                }
+
+                if (!check_qos(arm_name(arm), result.qos)) {
                     return 1;
                 }
 
@@ -314,6 +454,10 @@ int main()
                     return 1;
                 }
 
+                if (!check_qos(arm_name(arm), result.qos)) {
+                    return 1;
+                }
+
                 trial.seconds = result.seconds;
                 break;
             }
@@ -329,6 +473,10 @@ int main()
                     return 1;
                 }
 
+                if (!check_qos(arm_name(arm), result.qos)) {
+                    return 1;
+                }
+
                 trial.seconds = result.seconds;
                 trial.full_rejections = result.full_rejections;
                 break;
@@ -341,6 +489,10 @@ int main()
                 if (result.pushes_completed != kIterations ||
                     result.pops_completed != kIterations) {
                     std::cerr << "invalid queue_seq_cst run\n";
+                    return 1;
+                }
+
+                if (!check_qos(arm_name(arm), result.qos)) {
                     return 1;
                 }
 
