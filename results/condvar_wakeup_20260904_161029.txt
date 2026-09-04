@@ -1,0 +1,27 @@
+experiment: condvar_wakeup
+git_commit: c28e2481eb325e8c9d95ab49922b6eb18b9f2403
+git_dirty: no
+rounds: 20
+condvar_iterations_per_round: 20000
+atomic_iterations_per_round: 2000000
+spin_iterations_per_round: 20000000
+qos_class: user_interactive
+
+condvar_round_trip_ns_median: 2671.63
+condvar_round_trip_ns_min: 2484.92
+condvar_round_trip_ns_max: 4420.71
+atomic_round_trip_ns_median: 78.7183
+atomic_round_trip_ns_min: 67.7703
+atomic_round_trip_ns_max: 107.27
+spin_iteration_ns_quiet_median: 0.287561
+spin_iteration_ns_contended_median: 1.29147
+
+park_wake_ns: 1296.45
+derived_spin_count_contended: 1003.86
+derived_spin_count_quiet: 4508.44
+
+# The contended figure is the one to adopt: under load the
+# producer is writing tail_, so wait_nonempty's loads miss.
+# A1a measured an atomic ping-pong at 36.9 ns/handoff; if
+# atomic_round_trip_ns_median is far from twice that, this
+# harness is wrong and arm 1 should not be trusted either.

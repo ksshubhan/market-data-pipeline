@@ -135,18 +135,59 @@ public:
     }
 
 private:
-    // PROVISIONAL, and marked so deliberately (§4, decided 4 Sep).
+    // Derived, not fitted. §4's "tuned" is earned as of 4 Sep.
     //
-    // The mechanism cannot be wrong; only this constant can. It is tuned
-    // in Step 12 once B1 shows the distribution of empty-queue intervals
-    // under load. Choosing it now would mean writing a number with
-    // nothing behind it, and §6.3 already set the house style against
-    // that by deriving the 70 ns calibration threshold from a model
-    // rather than picking it.
+    // Spinning on an empty queue is worth doing only while it costs less
+    // than blocking would. Spin for exactly the cost of a park and wake
+    // and the worst case is twice the optimal offline choice — the
+    // ski-rental bound. So the constant is park/wake cost divided by the
+    // cost of one iteration of the loop above, and both are measurable:
+    // src/measure_condvar_wakeup.cpp measures them.
     //
-    // Until that tuning happens the word "tuned" in §10's CV line is not
-    // earned.
-    static constexpr int kSpinCount = 200;
+    // This replaces §4's original method, which was to fit the constant
+    // to the distribution of empty-queue intervals observed in B1. That
+    // is circular — the tuned baseline is what produces B1 — and it
+    // would make the constant depend on which offered rates happened to
+    // be swept. Deriving it matches the house style §6.3 set by taking
+    // the 70 ns calibration threshold from the single-boundary model
+    // rather than picking a round number.
+    //
+    // Measured on the M2, six runs at commit c28e248, QoS applied, mains
+    // power:
+    //
+    //   park/wake cost              1272-1322 ns  (median ~1296)
+    //   spin iteration, contended   1.291-1.301 ns in 5 of 6 runs
+    //   derived count               982, 985, 1004, 1007, 1023
+    //
+    // A sixth run reported a contended iteration of 0.966 ns and a
+    // derived 1323; it is recorded rather than dropped, but five samples
+    // within 0.7% of each other identify it as the outlier.
+    //
+    // 1000 is the median rounded. The rounding is not the thing §6.3
+    // warns against: the derivation produces 1004, and 1000 is the same
+    // number within the resolution of the method rather than a figure
+    // chosen for looking tidy.
+    //
+    // Two known biases, both pointing the same way. park/wake was
+    // measured with cores free, so under B1's load — where the
+    // producer's pacing spin occupies one — a wake may queue behind it
+    // and cost more. And the contended iteration was measured against a
+    // writer in a tight store loop, harsher than a producer doing work
+    // between stores, so 1.29 ns likely overstates it. Numerator low,
+    // denominator high: the true optimum is above 1004, not below.
+    //
+    // That direction is also the safer one to err in, which is not
+    // symmetric and is worth knowing. With spin budget S and blocking
+    // cost B, undershooting degrades as 1 + B/S while overshooting
+    // degrades as 1 + S/B. At S = B/5 the worst case is 6x optimal; at
+    // S = 2B it is only 3x.
+    //
+    // Which is what was wrong with the provisional 200. At 1.29 ns an
+    // iteration that was 258 ns of spinning against a 1296 ns blocking
+    // cost — roughly B/5, the bad end of that curve. It paid a 1.3 us
+    // park and wake to avoid about 1 us of spinning, on every empty
+    // queue. "Did the tuning matter" has a number behind it now.
+    static constexpr int kSpinCount = 1000;
 
     // Racy reads used only to decide whether to take the lock. See
     // wait_nonempty().
