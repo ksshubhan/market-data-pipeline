@@ -33,7 +33,11 @@ enum class Experiment {
     A1,
 
     // A2: producer/consumer index separation, 64 vs 128 vs 256 bytes.
-    A2
+    A2,
+
+    // A2b: isolated false-sharing microbenchmark. Same separation
+    // question as A2 with the queue removed entirely.
+    A2b
 };
 
 enum class Arm {
@@ -51,7 +55,17 @@ enum class Arm {
     // false sharing is real rather than hypothetical.
     QueueSeparation64,
     QueueSeparation128,
-    QueueSeparation256
+    QueueSeparation256,
+
+    // A2b. No queue: two threads, two atomics, nothing but release
+    // stores. SharedLine16 is the positive control — 16 bytes apart is
+    // inside any plausible coherence granule, so if it is not markedly
+    // slower than the others the benchmark is not provoking false
+    // sharing at all and none of the arms mean anything.
+    SharedLine16,
+    FalseSharing64,
+    FalseSharing128,
+    FalseSharing256
 };
 
 const char* arm_name(Arm arm)
@@ -73,6 +87,14 @@ const char* arm_name(Arm arm)
         return "queue_separation_128";
     case Arm::QueueSeparation256:
         return "queue_separation_256";
+    case Arm::SharedLine16:
+        return "shared_line_16";
+    case Arm::FalseSharing64:
+        return "false_sharing_64";
+    case Arm::FalseSharing128:
+        return "false_sharing_128";
+    case Arm::FalseSharing256:
+        return "false_sharing_256";
     }
 
     std::abort();
@@ -121,6 +143,12 @@ struct TrialResult {
     Arm arm;
     double seconds;
     std::uint64_t full_rejections;
+
+    // Operations completed in this trial. A1 and A2 arms complete
+    // kIterations handoffs; A2b arms complete 2 * stores-per-thread
+    // release stores. Kept explicit so the throughput column is never
+    // divided by the wrong denominator.
+    std::uint64_t operations;
 };
 
 struct AtomicRunResult {
@@ -156,6 +184,8 @@ const char* experiment_name(Experiment experiment)
         return "a1";
     case Experiment::A2:
         return "a2";
+    case Experiment::A2b:
+        return "a2b";
     }
 
     std::abort();
@@ -167,7 +197,8 @@ bool parse_provenance(int argc, char* argv[], Provenance& out)
         std::cerr
             << "Usage:\n"
             << "  " << argv[0]
-            << " <git-commit-40-hex> <dirty:0|1> <experiment:a1|a2>\n";
+            << " <git-commit-40-hex> <dirty:0|1>"
+            << " <experiment:a1|a2|a2b>\n";
 
         return false;
     }
@@ -196,8 +227,10 @@ bool parse_provenance(int argc, char* argv[], Provenance& out)
         out.experiment = Experiment::A1;
     } else if (experiment_text == "a2") {
         out.experiment = Experiment::A2;
+    } else if (experiment_text == "a2b") {
+        out.experiment = Experiment::A2b;
     } else {
-        std::cerr << "error: experiment must be a1 or a2\n";
+        std::cerr << "error: experiment must be a1, a2 or a2b\n";
         return false;
     }
 
@@ -342,6 +375,137 @@ RunResult run_once()
     };
 }
 
+// A2b: the separation question with the queue taken out.
+//
+// A2 could not answer it. Its three arms differed by up to 60x in
+// full_rejections, so "completed handoffs per second" was partly
+// measuring how far the producer outran the consumer (§7.7a). Here there
+// is no queue, no retry loop and no capacity, so the two threads cannot
+// get out of balance: each performs exactly the same number of release
+// stores to its own atomic and nothing else.
+//
+// Release stores, not relaxed, because that is what the queue does — the
+// producer publishes tail_ with a release store on every push and the
+// consumer publishes head_ the same way on every pop. Those unconditional
+// stores are what would false-share, not the conditional cross-loads.
+//
+// The struct is always 256-aligned so the first counter sits on a line
+// boundary in every arm; only the distance to the second counter varies.
+template <std::size_t Separation>
+struct alignas(256) SeparatedCounters {
+    static_assert(
+        Separation >= 16,
+        "Separation must leave room for the first counter"
+    );
+
+    std::atomic<std::uint64_t> first{0};
+    std::uint8_t padding[Separation - sizeof(std::atomic<std::uint64_t>)]{};
+    std::atomic<std::uint64_t> second{0};
+};
+
+struct SeparationRunResult {
+    std::uint64_t stores_completed;
+    double seconds;
+    std::ptrdiff_t observed_separation;
+    QosResult qos;
+};
+
+constexpr std::uint64_t kSeparationStoresPerThread = 20'000'000;
+
+template <std::size_t Separation>
+SeparationRunResult run_separation_once()
+{
+    SeparatedCounters<Separation> counters;
+
+    // §6.5b: verify the layout rather than assuming alignas worked.
+    const std::ptrdiff_t observed =
+        reinterpret_cast<const std::uint8_t*>(&counters.second) -
+        reinterpret_cast<const std::uint8_t*>(&counters.first);
+
+    if (observed != static_cast<std::ptrdiff_t>(Separation) ||
+        reinterpret_cast<std::uintptr_t>(&counters.first) % 256 != 0) {
+        std::cerr << "separation layout incorrect\n";
+        std::abort();
+    }
+
+    std::atomic<bool> start{false};
+    std::atomic<int> ready{0};
+
+    // Both writers record their own finish time and the later one is
+    // taken. The two threads are symmetric, so unlike run_once there is no
+    // thread that finishes last by construction: reading the clock in only
+    // one of them would understate elapsed time whenever the other ran on
+    // past it.
+    std::uint64_t first_end_ns = 0;
+    std::uint64_t second_end_ns = 0;
+
+    QosResult first_qos = QosResult::not_attempted;
+    QosResult second_qos = QosResult::not_attempted;
+
+    std::thread writer_second([&] {
+        second_qos = request_user_interactive_qos();
+        ready.fetch_add(1, std::memory_order_release);
+
+        while (!start.load(std::memory_order_acquire)) {
+        }
+
+        for (std::uint64_t i = 0;
+             i < kSeparationStoresPerThread;
+             ++i) {
+            counters.second.store(i + 1, std::memory_order_release);
+        }
+
+        second_end_ns = now_ns();
+    });
+
+    std::thread writer_first([&] {
+        first_qos = request_user_interactive_qos();
+        ready.fetch_add(1, std::memory_order_release);
+
+        while (!start.load(std::memory_order_acquire)) {
+        }
+
+        for (std::uint64_t i = 0;
+             i < kSeparationStoresPerThread;
+             ++i) {
+            counters.first.store(i + 1, std::memory_order_release);
+        }
+
+        first_end_ns = now_ns();
+    });
+
+    while (ready.load(std::memory_order_acquire) != 2) {
+    }
+
+    const std::uint64_t begin_ns = now_ns();
+
+    start.store(true, std::memory_order_release);
+
+    writer_first.join();
+    writer_second.join();
+
+    if (counters.first.load(std::memory_order_relaxed) !=
+            kSeparationStoresPerThread ||
+        counters.second.load(std::memory_order_relaxed) !=
+            kSeparationStoresPerThread) {
+        std::cerr << "separation counter final value incorrect\n";
+        std::abort();
+    }
+
+    const std::uint64_t end_ns =
+        first_end_ns > second_end_ns ? first_end_ns : second_end_ns;
+
+    const double elapsed_seconds =
+        static_cast<double>(end_ns - begin_ns) / 1'000'000'000.0;
+
+    return SeparationRunResult{
+        2 * kSeparationStoresPerThread,
+        elapsed_seconds,
+        observed,
+        combine_qos(first_qos, second_qos)
+    };
+}
+
 template <
     std::memory_order LoadOrder,
     std::memory_order StoreOrder
@@ -455,6 +619,15 @@ int main(int argc, char* argv[])
             Arm::QueueSeparation256
         };
         break;
+
+    case Experiment::A2b:
+        arms = {
+            Arm::SharedLine16,
+            Arm::FalseSharing64,
+            Arm::FalseSharing128,
+            Arm::FalseSharing256
+        };
+        break;
     }
 
     std::vector<TrialResult> results;
@@ -464,7 +637,10 @@ int main(int argc, char* argv[])
         << "git_commit: " << provenance.git_commit << '\n'
         << "git_dirty: " << (provenance.dirty ? "yes" : "no") << '\n'
         << "utc_timestamp: " << utc_timestamp() << '\n'
-        << "iterations_per_trial: " << kIterations << '\n'
+        << "iterations_per_trial: "
+        << (provenance.experiment == Experiment::A2b
+                ? 2 * kSeparationStoresPerThread
+                : kIterations) << '\n'
         << "rounds: " << kRounds << '\n'
         << "experiment: "
         << experiment_name(provenance.experiment) << '\n'
@@ -484,7 +660,7 @@ int main(int argc, char* argv[])
         << "qos_class: user_interactive\n";
 
     std::cout
-        << "round,arm,seconds,completed_handoffs_per_second,"
+        << "round,arm,seconds,completed_operations_per_second,"
            "full_rejections\n";
 
     for (std::size_t round = 0; round < kRounds; ++round) {
@@ -495,7 +671,8 @@ int main(int argc, char* argv[])
                 round,
                 arm,
                 0.0,
-                0
+                0,
+                kIterations
             };
 
             switch (arm) {
@@ -637,6 +814,82 @@ int main(int argc, char* argv[])
                 break;
             }
 
+            case Arm::SharedLine16: {
+                const SeparationRunResult result =
+                    run_separation_once<16>();
+
+                if (result.stores_completed !=
+                    2 * kSeparationStoresPerThread) {
+                    std::cerr << "invalid shared_line_16 run\n";
+                    return 1;
+                }
+
+                if (!check_qos(arm_name(arm), result.qos)) {
+                    return 1;
+                }
+
+                trial.seconds = result.seconds;
+                trial.operations = result.stores_completed;
+                break;
+            }
+
+            case Arm::FalseSharing64: {
+                const SeparationRunResult result =
+                    run_separation_once<64>();
+
+                if (result.stores_completed !=
+                    2 * kSeparationStoresPerThread) {
+                    std::cerr << "invalid false_sharing_64 run\n";
+                    return 1;
+                }
+
+                if (!check_qos(arm_name(arm), result.qos)) {
+                    return 1;
+                }
+
+                trial.seconds = result.seconds;
+                trial.operations = result.stores_completed;
+                break;
+            }
+
+            case Arm::FalseSharing128: {
+                const SeparationRunResult result =
+                    run_separation_once<128>();
+
+                if (result.stores_completed !=
+                    2 * kSeparationStoresPerThread) {
+                    std::cerr << "invalid false_sharing_128 run\n";
+                    return 1;
+                }
+
+                if (!check_qos(arm_name(arm), result.qos)) {
+                    return 1;
+                }
+
+                trial.seconds = result.seconds;
+                trial.operations = result.stores_completed;
+                break;
+            }
+
+            case Arm::FalseSharing256: {
+                const SeparationRunResult result =
+                    run_separation_once<256>();
+
+                if (result.stores_completed !=
+                    2 * kSeparationStoresPerThread) {
+                    std::cerr << "invalid false_sharing_256 run\n";
+                    return 1;
+                }
+
+                if (!check_qos(arm_name(arm), result.qos)) {
+                    return 1;
+                }
+
+                trial.seconds = result.seconds;
+                trial.operations = result.stores_completed;
+                break;
+            }
+
             case Arm::QueueSeparation256: {
                 const RunResult result =
                     run_once<Separation256Queue>();
@@ -658,7 +911,7 @@ int main(int argc, char* argv[])
             }
 
             const double throughput =
-                static_cast<double>(kIterations) / trial.seconds;
+                static_cast<double>(trial.operations) / trial.seconds;
 
             results.push_back(trial);
 
