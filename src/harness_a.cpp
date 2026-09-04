@@ -41,7 +41,10 @@ enum class Experiment {
     A2b,
 
     // A3b: slot-level false sharing, again with the queue removed.
-    A3b
+    A3b,
+
+    // A4: cached vs uncached opposite index, in the real queue.
+    A4
 };
 
 enum class Arm {
@@ -75,7 +78,12 @@ enum class Arm {
     // every arm; the slot wrapper is what is over-aligned (§6.5 A3).
     SlotStride80,
     SlotStride128,
-    SlotStride256
+    SlotStride256,
+
+    // A4. Both acquire-release at the default separation; the only
+    // difference is whether the opposite index is cached.
+    QueueCachedIndex,
+    QueueUncachedIndex
 };
 
 const char* arm_name(Arm arm)
@@ -111,6 +119,10 @@ const char* arm_name(Arm arm)
         return "slot_stride_128";
     case Arm::SlotStride256:
         return "slot_stride_256";
+    case Arm::QueueCachedIndex:
+        return "queue_cached_index";
+    case Arm::QueueUncachedIndex:
+        return "queue_uncached_index";
     }
 
     std::abort();
@@ -153,6 +165,30 @@ using Separation256Queue = SpscRingBuffer<
     256,
     SpscMemoryOrder::AcquireRelease
 >;
+
+// A4 arms. CachedIndexQueue is the same instantiation as
+// AcquireReleaseQueue; naming it separately keeps the results file
+// self-describing about which experiment produced the row.
+using CachedIndexQueue = SpscRingBuffer<
+    Record,
+    kCapacity,
+    128,
+    SpscMemoryOrder::AcquireRelease,
+    SpscIndexCaching::Cached
+>;
+
+using UncachedIndexQueue = SpscRingBuffer<
+    Record,
+    kCapacity,
+    128,
+    SpscMemoryOrder::AcquireRelease,
+    SpscIndexCaching::Uncached
+>;
+
+// The cached indices are retained in the uncached arm, so the two arms
+// must have identical layout. If they did not, A4 would vary two things
+// at once.
+static_assert(sizeof(CachedIndexQueue) == sizeof(UncachedIndexQueue));
 
 struct TrialResult {
     std::size_t round;
@@ -204,6 +240,8 @@ const char* experiment_name(Experiment experiment)
         return "a2b";
     case Experiment::A3b:
         return "a3b";
+    case Experiment::A4:
+        return "a4";
     }
 
     std::abort();
@@ -216,7 +254,7 @@ bool parse_provenance(int argc, char* argv[], Provenance& out)
             << "Usage:\n"
             << "  " << argv[0]
             << " <git-commit-40-hex> <dirty:0|1>"
-            << " <experiment:a1|a2|a2b|a3b>\n";
+            << " <experiment:a1|a2|a2b|a3b|a4>\n";
 
         return false;
     }
@@ -249,9 +287,11 @@ bool parse_provenance(int argc, char* argv[], Provenance& out)
         out.experiment = Experiment::A2b;
     } else if (experiment_text == "a3b") {
         out.experiment = Experiment::A3b;
+    } else if (experiment_text == "a4") {
+        out.experiment = Experiment::A4;
     } else {
         std::cerr
-            << "error: experiment must be a1, a2, a2b or a3b\n";
+            << "error: experiment must be a1, a2, a2b, a3b or a4\n";
         return false;
     }
 
@@ -734,6 +774,13 @@ int main(int argc, char* argv[])
             Arm::SlotStride256
         };
         break;
+
+    case Experiment::A4:
+        arms = {
+            Arm::QueueCachedIndex,
+            Arm::QueueUncachedIndex
+        };
+        break;
     }
 
     std::vector<TrialResult> results;
@@ -765,6 +812,10 @@ int main(int argc, char* argv[])
         << sizeof(AlignedSlot<128>) << '\n'
         << "sizeof_slot_stride_256: "
         << sizeof(AlignedSlot<256>) << '\n'
+        << "sizeof_queue_cached_index: "
+        << sizeof(CachedIndexQueue) << '\n'
+        << "sizeof_queue_uncached_index: "
+        << sizeof(UncachedIndexQueue) << '\n'
         << "shuffle_seed: " << kShuffleSeed << '\n';
 
     // §5: a P-core bias hint, not pinning. Every trial verifies the class
@@ -916,6 +967,46 @@ int main(int argc, char* argv[])
                 if (result.pushes_completed != kIterations ||
                     result.pops_completed != kIterations) {
                     std::cerr << "invalid queue_separation_128 run\n";
+                    return 1;
+                }
+
+                if (!check_qos(arm_name(arm), result.qos)) {
+                    return 1;
+                }
+
+                trial.seconds = result.seconds;
+                trial.full_rejections = result.full_rejections;
+                break;
+            }
+
+            case Arm::QueueCachedIndex: {
+                const RunResult result =
+                    run_once<CachedIndexQueue>();
+
+                if (result.pushes_completed != kIterations ||
+                    result.pops_completed != kIterations) {
+                    std::cerr
+                        << "invalid queue_cached_index run\n";
+                    return 1;
+                }
+
+                if (!check_qos(arm_name(arm), result.qos)) {
+                    return 1;
+                }
+
+                trial.seconds = result.seconds;
+                trial.full_rejections = result.full_rejections;
+                break;
+            }
+
+            case Arm::QueueUncachedIndex: {
+                const RunResult result =
+                    run_once<UncachedIndexQueue>();
+
+                if (result.pushes_completed != kIterations ||
+                    result.pops_completed != kIterations) {
+                    std::cerr
+                        << "invalid queue_uncached_index run\n";
                     return 1;
                 }
 

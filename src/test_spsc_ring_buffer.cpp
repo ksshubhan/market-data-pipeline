@@ -2,7 +2,6 @@
 #include "record.hpp"
 #include <atomic>
 #include <cstdint>
-
 #include <iostream>
 #include <thread>
 
@@ -18,6 +17,140 @@ bool check(bool condition, const char* message)
 
     return true;
 }
+
+// A4: the uncached arm must behave identically. Same FIFO order, same
+// full-capacity behaviour, same rejection accounting - the only
+// difference is when the opposite index is read.
+bool test_uncached_queue()
+{
+    using Queue = SpscRingBuffer<
+        std::uint64_t,
+        4,
+        128,
+        SpscMemoryOrder::AcquireRelease,
+        SpscIndexCaching::Uncached
+    >;
+
+    Queue queue;
+
+    for (std::uint64_t value : {10, 20, 30, 40}) {
+        if (!check(queue.try_push(value), "uncached push failed")) {
+            return false;
+        }
+    }
+
+    if (!check(
+            !queue.try_push(50),
+            "uncached full queue accepted extra item"
+        )) {
+        return false;
+    }
+
+    if (!check(
+            queue.full_rejections() == 1,
+            "uncached full rejection count incorrect"
+        )) {
+        return false;
+    }
+
+    std::uint64_t value = 0;
+
+    for (std::uint64_t expected : {10, 20, 30, 40}) {
+        if (!check(
+                queue.try_pop(value) && value == expected,
+                "uncached FIFO mismatch"
+            )) {
+            return false;
+        }
+    }
+
+    if (!check(
+            !queue.try_pop(value),
+            "uncached empty queue returned an item"
+        )) {
+        return false;
+    }
+
+    // Wrap the masked indices.
+    if (!check(
+            queue.try_push(60) && queue.try_push(70),
+            "uncached wrapped push failed"
+        )) {
+        return false;
+    }
+
+    if (!check(
+            queue.try_pop(value) && value == 60,
+            "uncached wrapped FIFO failed"
+        )) {
+        return false;
+    }
+
+    if (!check(
+            queue.try_pop(value) && value == 70,
+            "uncached wrapped FIFO failed"
+        )) {
+        return false;
+    }
+
+    return true;
+}
+
+
+bool test_uncached_two_thread()
+{
+    constexpr std::uint64_t kCount = 1'000'000;
+
+    using Queue = SpscRingBuffer<
+        std::uint64_t,
+        1024,
+        128,
+        SpscMemoryOrder::AcquireRelease,
+        SpscIndexCaching::Uncached
+    >;
+
+    Queue queue;
+
+    std::atomic<bool> failed{false};
+
+    std::thread consumer([&] {
+        for (std::uint64_t expected = 0; expected < kCount; ++expected) {
+            std::uint64_t value = 0;
+
+            while (!queue.try_pop(value)) {
+            }
+
+            if (value != expected) {
+                std::cerr
+                    << "FAIL: uncached two-thread handoff corrupted FIFO"
+                       " order at index "
+                    << expected
+                    << ", observed "
+                    << value
+                    << '\n';
+
+                failed.store(true, std::memory_order_release);
+                return;
+            }
+        }
+    });
+
+    std::thread producer([&] {
+        for (std::uint64_t value = 0; value < kCount; ++value) {
+            while (!queue.try_push(value)) {
+                if (failed.load(std::memory_order_acquire)) {
+                    return;
+                }
+            }
+        }
+    });
+
+    producer.join();
+    consumer.join();
+
+    return !failed.load(std::memory_order_acquire);
+}
+
 
 bool test_seq_cst_queue()
 {
@@ -322,6 +455,14 @@ int main()
     }
 
     if (!test_seq_cst_queue()) {
+        return 1;
+    }
+
+    if (!test_uncached_queue()) {
+        return 1;
+    }
+
+    if (!test_uncached_two_thread()) {
         return 1;
     }
 
