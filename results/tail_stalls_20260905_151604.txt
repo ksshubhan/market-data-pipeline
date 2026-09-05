@@ -2,6 +2,12 @@
 TAIL STRUCTURE  (samples with latency >= 1000 ns)
 ==============================================================================
 
+drain span   = span of dequeue timestamps across a cluster: how
+               long the backlog took to drain once the consumer
+               was running again. NOT the length of the stall.
+stall length = worst latency inside the cluster, a lower bound on
+               how long the CPU was away. Quote this one.
+
 mutex  @  100,000 records/s   (run 20.00 s)
     messages disturbed    1,062,550   (53.1275% of 2,000,000)
     their latency        median    6.33us   p99   14.71us   max  238.83us
@@ -16,8 +22,8 @@ mutex  @  1,000,000 records/s   (run 1.99 s)
     their latency        median    4.58us   p99   36.38us   max   44.79us
     stalls                      296   (148/s)
     messages per stall   median       4   max 75
-    stall duration       median      83ns   p99   46.12us   max   71.08us
-    worst latency inside median    4.21us                   max   44.79us
+    drain span           median      83ns   p99   46.12us   max   71.08us
+    stall length (>=)    median    4.21us                   max   44.79us
     gap between stalls   median    9.30ms
     => BURSTY. Slow messages arrive in contiguous runs,
        which is a consumer stall delivering a backlog
@@ -28,8 +34,8 @@ spsc  @  100,000 records/s   (run 20.00 s)
     their latency        median    5.08us   p99  526.79us   max    1.18ms
     stalls                    6,911   (346/s)
     messages per stall   median       1   max 171
-    stall duration       median       0ns   p99  100.12us   max    1.18ms
-    worst latency inside median    6.67us                   max    1.18ms
+    drain span           median       0ns   p99  100.12us   max    1.18ms
+    stall length (>=)    median    6.67us                   max    1.18ms
     gap between stalls   median    1.14ms
     => ISOLATED. Slow messages are mostly singletons.
 
@@ -38,8 +44,8 @@ spsc  @  1,000,000 records/s   (run 2.00 s)
     their latency        median    5.96us   p99   30.00us   max   46.79us
     stalls                      795   (398/s)
     messages per stall   median       4   max 47
-    stall duration       median      83ns   p99   11.71us   max   23.75us
-    worst latency inside median    4.54us                   max   46.79us
+    drain span           median      83ns   p99   11.71us   max   23.75us
+    stall length (>=)    median    4.54us                   max   46.79us
     gap between stalls   median    2.12ms
     => BURSTY. Slow messages arrive in contiguous runs,
        which is a consumer stall delivering a backlog

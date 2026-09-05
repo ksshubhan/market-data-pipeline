@@ -161,14 +161,19 @@ that shows up as a 12 µs floor on any latency distribution measured here.
 mechanism was measured in calibration, predicted, and then observed in the
 pipeline.
 
-Two caveats on the numbers above. The `stall duration` column the analysis
-script prints is the span of *dequeue* timestamps across a cluster — how
-long the backlog took to drain, not how long the CPU was away — so the
-stall length quoted here is the worst latency inside each cluster instead.
-And the 100k runs last 20 s against the 1M runs' 2 s, so the 100k row has
-ten times the exposure to rare events; that is most of why its maximum is
-1.18 ms. p99.9 is insensitive to run length and the 12 µs floor is
-unaffected.
+Two caveats on the numbers above. The analysis script reports two
+per-cluster durations and they are not interchangeable: `drain span` is
+the span of *dequeue* timestamps across a cluster, i.e. how long the
+backlog took to drain once the consumer was running again, while
+`stall length` is the worst latency inside the cluster and is a lower
+bound on how long the CPU was away. The figures quoted here are stall
+lengths. An earlier version of the script called the first column
+`stall duration`, and that name was read into the plan as a stall length
+before its own median values — 0 ns and 83 ns — made clear it could not
+be one. And the 100k runs last 20 s against the 1M runs' 2 s, so the
+100k row has ten times the exposure to rare events; that is most of why
+its maximum is 1.18 ms. p99.9 is insensitive to run length and the 12 µs
+floor is unaffected.
 
 ### B3 — parse cost against handoff cost
 

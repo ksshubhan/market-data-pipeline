@@ -23,6 +23,30 @@ for several microseconds and every message arriving during the stall is
 delivered late together. So the questions worth asking are how often the
 stalls happen, how long they last, and how many messages each disturbs.
 
+WHAT THE SECOND VERSION GOT WRONG, and why two columns are named the way
+they are.
+
+This script reports two per-cluster durations and they measure different
+things. The first version called one of them `stall duration`, and that
+name was read straight into the project plan as the length of the
+scheduling event. It is not, and the numbers said so plainly: median
+values of 0 ns and 83 ns cannot be scheduling events.
+
+  drain span    c[-1][1] - c[0][1], the span of *dequeue* timestamps
+                across a cluster. How long the consumer took to work
+                through the backlog once it got the CPU back. It is
+                near-zero when the backlog drains at full speed, which
+                is the normal case, so a small value here says nothing
+                about how long the CPU was away.
+
+  stall length  max latency inside the cluster. A message delayed by X
+                waited through the whole stall plus its own queueing, so
+                this is a *lower bound* on how long the CPU was away —
+                hence the (>=). This is the column to quote.
+
+The rename is the fix. The old name licensed the misreading and nothing
+else in the output contradicted it.
+
 Usage:
     python3 tools/analyse_tail_samples.py results/tail_samples_*.csv
 """
@@ -117,6 +141,12 @@ def main(argv):
     print("=" * 78)
     print("TAIL STRUCTURE  (samples with latency >= 1000 ns)")
     print("=" * 78)
+    print()
+    print("drain span   = span of dequeue timestamps across a cluster: how")
+    print("               long the backlog took to drain once the consumer")
+    print("               was running again. NOT the length of the stall.")
+    print("stall length = worst latency inside the cluster, a lower bound on")
+    print("               how long the CPU was away. Quote this one.")
 
     for key in sorted(series):
         arm, rate = key
@@ -130,15 +160,24 @@ def main(argv):
         run_s = run_ns / 1e9 if run_ns else 0.0
 
         sizes = [len(c) for c in clusters]
-        durations = [c[-1][1] - c[0][1] for c in clusters]
-        worst = [max(r[2] for r in c) for c in clusters]
+
+        # Dequeue timestamps, so this is backlog drain time, not stall
+        # length. The consumer was already running again when the first
+        # of these was recorded. Named for what it is; see the docstring
+        # for what happened when it was not.
+        drain_spans = [c[-1][1] - c[0][1] for c in clusters]
+
+        # Lower bound on how long the CPU was away: the worst-delayed
+        # message in a cluster waited through the stall plus its own
+        # queueing.
+        stall_lengths = [max(r[2] for r in c) for c in clusters]
 
         starts = [c[0][1] for c in clusters]
         between = [b - a for a, b in zip(starts, starts[1:])]
 
         size_med, _, size_max = summarise(sizes)
-        dur_med, dur_p99, dur_max = summarise(durations)
-        worst_med, _, worst_max = summarise(worst)
+        drain_med, drain_p99, drain_max = summarise(drain_spans)
+        stall_med, _, stall_max = summarise(stall_lengths)
         between_med, _, _ = summarise(between)
 
         per_second = (len(clusters) / run_s) if run_s else 0.0
@@ -171,10 +210,10 @@ def main(argv):
                   f"   ({per_second:,.0f}/s)")
             print(f"    messages per stall   median {size_med:>7,.0f}"
                   f"   max {size_max:,}")
-            print(f"    stall duration       median {fmt(dur_med):>9}"
-                  f"   p99 {fmt(dur_p99):>9}   max {fmt(dur_max):>9}")
-            print(f"    worst latency inside median {fmt(worst_med):>9}"
-                  f"                   max {fmt(worst_max):>9}")
+            print(f"    drain span           median {fmt(drain_med):>9}"
+                  f"   p99 {fmt(drain_p99):>9}   max {fmt(drain_max):>9}")
+            print(f"    stall length (>=)    median {fmt(stall_med):>9}"
+                  f"                   max {fmt(stall_max):>9}")
             print(f"    gap between stalls   median {fmt(between_med):>9}")
 
         if fraction >= PERVASIVE_FRACTION:
