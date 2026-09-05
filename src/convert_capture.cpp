@@ -2,6 +2,7 @@
 #include "parser.hpp"
 #include "record.hpp"
 
+#include <cerrno>
 #include <charconv>
 #include <cstddef>
 #include <cstdint>
@@ -13,6 +14,9 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+
+#include <fcntl.h>
+#include <unistd.h>
 
 
 static_assert(sizeof(BinaryHeader) == 64);
@@ -172,6 +176,170 @@ void remove_temp_file(
 {
     std::error_code error;
     std::filesystem::remove(temp_path, error);
+}
+
+
+// Owns a descriptor for the rest of a scope. main() leaves through
+// thirty-odd returns and the descriptor opened for the directory has to
+// stay open across the rename, so the alternative is a close on every
+// exit path and a leak on the one that gets missed.
+//
+// The destructor discards close()'s result deliberately. A close can
+// only report a lost write, and neither descriptor this class holds is
+// ever written through: the directory is opened O_RDONLY, and the
+// contents descriptor is opened only so that fsync has something to act
+// on. Every byte was written and flushed by the ofstream, which was
+// closed and checked long before either of these exists.
+class ScopedFd {
+public:
+    explicit ScopedFd(int fd) noexcept
+        : fd_(fd)
+    {
+    }
+
+    ~ScopedFd()
+    {
+        if (fd_ >= 0) {
+            ::close(fd_);
+        }
+    }
+
+    ScopedFd(const ScopedFd&) = delete;
+    ScopedFd& operator=(const ScopedFd&) = delete;
+    ScopedFd(ScopedFd&&) = delete;
+    ScopedFd& operator=(ScopedFd&&) = delete;
+
+    int get() const noexcept
+    {
+        return fd_;
+    }
+
+    bool valid() const noexcept
+    {
+        return fd_ >= 0;
+    }
+
+private:
+    int fd_;
+};
+
+
+// EINTR on open(2) against a regular file or a directory on a local
+// filesystem is not something either target platform will produce. The
+// loop is three lines and its absence is the kind of thing that fails
+// once, in the field, on a filesystem nobody tested against.
+int open_retrying(const char* path, int flags) noexcept
+{
+    int fd = -1;
+
+    do {
+        fd = ::open(path, flags);
+    } while (fd < 0 && errno == EINTR);
+
+    return fd;
+}
+
+
+enum class SyncBarrier {
+    full_device_flush,
+    fsync_only,
+};
+
+
+const char* barrier_name(SyncBarrier barrier) noexcept
+{
+    switch (barrier) {
+    case SyncBarrier::full_device_flush:
+        return "F_FULLFSYNC";
+    case SyncBarrier::fsync_only:
+        return "fsync";
+    }
+
+    return "unknown";
+}
+
+
+struct SyncOutcome {
+    bool ok = false;
+    SyncBarrier barrier = SyncBarrier::fsync_only;
+
+    // errno from the call that failed, meaningful only when !ok.
+    int error = 0;
+
+    // Darwin only, and not a failure: the errno that made F_FULLFSYNC
+    // unusable on this filesystem, when the weaker barrier was used in
+    // its place. Zero when no downgrade happened.
+    int fallback_error = 0;
+};
+
+
+// Force a descriptor's file to stable storage.
+//
+// On Darwin fsync(2) is not the barrier its name suggests. It writes the
+// file's dirty pages out to the drive and returns; the drive is free to
+// be holding them in its own volatile write cache, which a power loss
+// empties. Apple documents F_FULLFSYNC as the call that additionally
+// asks the drive to flush that cache, and F_BARRIERFSYNC as a middle
+// option that orders this write against later ones without waiting for
+// the platter. F_BARRIERFSYNC is the wrong choice here: ordering the
+// data before the rename is exactly what a barrier gives, but the
+// converter has no later write to be ordered against — it exits — so
+// what is wanted is the stronger completion guarantee, not the cheaper
+// ordering one.
+//
+// F_FULLFSYNC is not universally supported; network and some virtual
+// filesystems reject it. A rejection falls back to fsync and records the
+// errno so the caller can say which barrier it actually got rather than
+// claiming the stronger one. Any errno outside the not-supported set is
+// a real I/O failure and must not be quietly downgraded into a weaker
+// barrier — that would turn a hardware error into a success.
+SyncOutcome sync_descriptor(int fd) noexcept
+{
+    SyncOutcome outcome;
+
+#if defined(__APPLE__)
+    int full_result = 0;
+
+    do {
+        full_result = ::fcntl(fd, F_FULLFSYNC, 0);
+    } while (full_result < 0 && errno == EINTR);
+
+    if (full_result == 0) {
+        outcome.ok = true;
+        outcome.barrier = SyncBarrier::full_device_flush;
+        return outcome;
+    }
+
+    const int full_errno = errno;
+
+    // ENOTSUP and EOPNOTSUPP are the same value on Darwin. Both are
+    // named because which spelling a filesystem's implementation
+    // reaches for is not something to depend on.
+    if (full_errno != ENOTSUP &&
+        full_errno != EOPNOTSUPP &&
+        full_errno != EINVAL &&
+        full_errno != ENOTTY) {
+        outcome.error = full_errno;
+        return outcome;
+    }
+
+    outcome.fallback_error = full_errno;
+#endif
+
+    int fsync_result = 0;
+
+    do {
+        fsync_result = ::fsync(fd);
+    } while (fsync_result < 0 && errno == EINTR);
+
+    if (fsync_result != 0) {
+        outcome.error = errno;
+        return outcome;
+    }
+
+    outcome.ok = true;
+    outcome.barrier = SyncBarrier::fsync_only;
+    return outcome;
 }
 
 } // namespace
@@ -705,6 +873,128 @@ int main(int argc, char* argv[])
         return 1;
     }
 
+    // -----------------------------------------------------------------
+    // Durability — §7.6
+    // -----------------------------------------------------------------
+    //
+    // Everything above this point establishes that the bytes in the page
+    // cache are the bytes that were meant to be there. None of it says
+    // the bytes are on the device. rename(2) is atomic with respect to
+    // the directory entry, not with respect to the file's contents: the
+    // metadata operation can reach stable storage while the data pages
+    // are still dirty, and a power loss in that window leaves a
+    // correctly-named .bin holding whatever those blocks held before.
+    // The size check and the header read-back both pass on that file
+    // when it is next opened, because they read back through a cache
+    // that has not lost anything — the loss happens below them.
+    //
+    // Order: open the directory, sync the contents, rename, sync the
+    // directory. The directory is opened before the rename rather than
+    // immediately before the sync that needs it because an open failure
+    // is recoverable — the .tmp is still deletable and nothing has been
+    // published — whereas the identical failure discovered after the
+    // rename is not. Everything that can fail cleanly is made to fail
+    // before the point of no return.
+    //
+    // The sync of the contents is placed after the read-back rather than
+    // before it so that a file the read-back is about to reject is not
+    // pushed to the device first. On the 734 MiB BTC dataset that
+    // ordering is worth real time; it changes nothing about what either
+    // check proves.
+
+    std::filesystem::path directory_path = output_path.parent_path();
+
+    if (directory_path.empty()) {
+        directory_path = ".";
+    }
+
+    // A directory can only be opened O_RDONLY — O_WRONLY on a directory
+    // is EISDIR. The contents descriptor below is opened O_WRONLY
+    // instead, because POSIX permits fsync to fail with EBADF on a
+    // descriptor that is not open for writing. Darwin and Linux both
+    // accept a read-only descriptor, but the standard does not require
+    // it and asking for write access on a file this process created
+    // costs nothing.
+    const ScopedFd directory_fd(
+        open_retrying(directory_path.c_str(), O_RDONLY)
+    );
+
+    if (!directory_fd.valid()) {
+        // errno is read before anything is written to cerr. Stream
+        // insertion is a library call and is entitled to set errno, and
+        // in `a << b << strerror(errno)` the left-hand insertions are
+        // sequenced before the argument is evaluated, so reading it
+        // inline would report whatever iostreams last did.
+        const int open_errno = errno;
+
+        std::cerr
+            << "error: could not open the output directory to make the"
+            << " rename durable: "
+            << directory_path
+            << ": "
+            << std::strerror(open_errno)
+            << '\n';
+
+        remove_temp_file(temp_path);
+        return 1;
+    }
+
+    SyncBarrier contents_barrier = SyncBarrier::fsync_only;
+
+    {
+        // fsync acts on the file, not on the descriptor it is handed, so
+        // a descriptor opened now still forces out the pages the
+        // now-closed ofstream left dirty. This is not a workaround for
+        // having discarded the write handle; it is the same operation on
+        // the same vnode. Doing it through the ofstream would not have
+        // been possible anyway — the standard library exposes no
+        // descriptor.
+        const ScopedFd contents_fd(
+            open_retrying(temp_path.c_str(), O_WRONLY)
+        );
+
+        if (!contents_fd.valid()) {
+            const int open_errno = errno;
+
+            std::cerr
+                << "error: could not reopen the temporary file to"
+                << " synchronise it: "
+                << temp_path
+                << ": "
+                << std::strerror(open_errno)
+                << '\n';
+
+            remove_temp_file(temp_path);
+            return 1;
+        }
+
+        const SyncOutcome outcome =
+            sync_descriptor(contents_fd.get());
+
+        if (!outcome.ok) {
+            std::cerr
+                << "error: could not synchronise the temporary file to"
+                << " stable storage: "
+                << std::strerror(outcome.error)
+                << '\n';
+
+            remove_temp_file(temp_path);
+            return 1;
+        }
+
+        if (outcome.fallback_error != 0) {
+            std::cerr
+                << "warning: F_FULLFSYNC was rejected for the file ("
+                << std::strerror(outcome.fallback_error)
+                << ")\n"
+                << "  fell back to fsync, which hands the data to the"
+                << " device without flushing the device's own write"
+                << " cache\n";
+        }
+
+        contents_barrier = outcome.barrier;
+    }
+
     std::filesystem::rename(
         temp_path,
         output_path,
@@ -717,7 +1007,41 @@ int main(int argc, char* argv[])
             << filesystem_error.message()
             << '\n';
 
+        remove_temp_file(temp_path);
         return 1;
+    }
+
+    const SyncOutcome directory_outcome =
+        sync_descriptor(directory_fd.get());
+
+    if (!directory_outcome.ok) {
+        // The one guard in this file that cannot delete the .tmp and
+        // publish nothing, because by the time it is able to fail the
+        // .tmp is the .bin. Renaming back would need a second directory
+        // operation on the directory that just failed one, and it would
+        // destroy a file whose contents are already durable in order to
+        // restore a symmetry. So the file stands, the exit status is
+        // non-zero so that no script reads this as a clean run, and the
+        // message names the guarantee that is missing rather than
+        // implying the whole conversion failed.
+        std::cerr
+            << "error: could not synchronise the output directory: "
+            << std::strerror(directory_outcome.error)
+            << '\n'
+            << "  the .bin was published and its contents are durable\n"
+            << "  what is not confirmed durable is the directory entry,"
+            << " so a power loss now could lose the name\n"
+            << "  do not treat this dataset as reproducible until the"
+            << " conversion is re-run\n";
+
+        return 1;
+    }
+
+    if (directory_outcome.fallback_error != 0) {
+        std::cerr
+            << "warning: F_FULLFSYNC was rejected for the directory ("
+            << std::strerror(directory_outcome.fallback_error)
+            << "); fell back to fsync\n";
     }
 
     std::cout
@@ -727,7 +1051,12 @@ int main(int argc, char* argv[])
         << "  symbol:  " << symbol << '\n'
         << "  records: " << record_count << '\n'
         << "  bytes:   " << expected_file_size << '\n'
-        << "  header:  read back and verified against 64 bytes\n";
+        << "  header:  read back and verified against 64 bytes\n"
+        << "  durable: contents via "
+        << barrier_name(contents_barrier)
+        << ", directory via "
+        << barrier_name(directory_outcome.barrier)
+        << '\n';
 
     return 0;
 }
