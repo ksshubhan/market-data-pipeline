@@ -138,6 +138,34 @@ bool write_bytes(
 }
 
 
+// Byte offset of the first difference between two objects of the same
+// size, or size when they are identical. It exists only so that a header
+// read-back failure is diagnosable: "the header does not match" tells
+// you nothing, "first differing byte at offset 8" points straight at
+// record_count and offset 16 points at a seek that landed two bytes
+// late.
+std::size_t first_differing_byte(
+    const void* left,
+    const void* right,
+    std::size_t size
+) noexcept
+{
+    const auto* left_bytes =
+        static_cast<const unsigned char*>(left);
+
+    const auto* right_bytes =
+        static_cast<const unsigned char*>(right);
+
+    for (std::size_t i = 0; i < size; ++i) {
+        if (left_bytes[i] != right_bytes[i]) {
+            return i;
+        }
+    }
+
+    return size;
+}
+
+
 void remove_temp_file(
     const std::filesystem::path& temp_path
 ) noexcept
@@ -525,6 +553,158 @@ int main(int argc, char* argv[])
         return 1;
     }
 
+    // -----------------------------------------------------------------
+    // Header read-back — §7.6
+    // -----------------------------------------------------------------
+    //
+    // record_count is the only field written by seeking backwards over
+    // an already-written file rather than by appending, and three ways
+    // that can go wrong leave the file's length untouched: a short
+    // write, a seek to the wrong offset, and a buffer that never reached
+    // the filesystem. The size check above passes in all three cases, so
+    // it cannot stand in for this one.
+    //
+    // The read goes through a new handle, opened after the write stream
+    // was closed. Re-reading through the stream that did the writing
+    // would only confirm that its own buffer holds what was put into it,
+    // and the buffer is not the layer that would have lost the bytes.
+    //
+    // The comparison covers all 64 bytes rather than record_count alone.
+    // A seek landing at the wrong offset writes eight bytes of count
+    // over whatever fields are there, so the damage is not confined to
+    // the field being patched. BinaryHeader has no padding — all 64
+    // bytes belong to a member, and every offset is statically asserted
+    // in capture_file.hpp — so memcmp over it is well defined and
+    // returns the same answer on every run.
+
+    BinaryHeader expected_header = header;
+    expected_header.record_count = record_count;
+
+    BinaryHeader stored_header{};
+
+    {
+        std::ifstream readback(
+            temp_path,
+            std::ios::in | std::ios::binary
+        );
+
+        if (!readback) {
+            std::cerr
+                << "error: could not reopen the temporary file to"
+                << " verify its header\n";
+
+            remove_temp_file(temp_path);
+            return 1;
+        }
+
+        readback.read(
+            reinterpret_cast<char*>(&stored_header),
+            static_cast<std::streamsize>(sizeof(stored_header))
+        );
+
+        // gcount, not the stream state: reading exactly 64 bytes from a
+        // much longer file leaves the stream good, so its state says
+        // nothing about how much came back.
+        if (readback.gcount() !=
+            static_cast<std::streamsize>(sizeof(stored_header))) {
+            std::cerr
+                << "error: short read while verifying the header\n"
+                << "  expected: "
+                << sizeof(stored_header)
+                << " bytes\n"
+                << "  read:     "
+                << readback.gcount()
+                << " bytes\n";
+
+            remove_temp_file(temp_path);
+            return 1;
+        }
+    }
+
+    if (stored_header.record_count == kUnfinalizedRecordCount) {
+        std::cerr
+            << "error: the poison record_count is still on disk\n"
+            << "  the seek-back-and-patch did not reach the file\n";
+
+        remove_temp_file(temp_path);
+        return 1;
+    }
+
+    if (stored_header.record_count != record_count) {
+        std::cerr
+            << "error: the stored record_count disagrees with the"
+            << " counter\n"
+            << "  counter: "
+            << record_count
+            << '\n'
+            << "  on disk: "
+            << stored_header.record_count
+            << '\n';
+
+        remove_temp_file(temp_path);
+        return 1;
+    }
+
+    if (actual_file_size < header_size) {
+        std::cerr
+            << "error: the temporary file is shorter than its own"
+            << " header\n";
+
+        remove_temp_file(temp_path);
+        return 1;
+    }
+
+    // §7.6 asks for the stored count to be checked against the file
+    // length as well as against the counter. Given the two checks above
+    // and the size check before them this cannot currently fire — it is
+    // the third side of a triangle whose other two sides have already
+    // been walked. It is written anyway because it is the constraint
+    // §7.6 names, and because it ties the stored field to the file
+    // length directly rather than through the in-memory counter, so it
+    // still holds if the size check above is ever changed or moved.
+    const std::uint64_t implied_record_count =
+        (static_cast<std::uint64_t>(actual_file_size) - header_size)
+        / record_size;
+
+    if (stored_header.record_count != implied_record_count) {
+        std::cerr
+            << "error: the stored record_count disagrees with the file"
+            << " length\n"
+            << "  on disk:      "
+            << stored_header.record_count
+            << '\n'
+            << "  file implies: "
+            << implied_record_count
+            << '\n';
+
+        remove_temp_file(temp_path);
+        return 1;
+    }
+
+    if (std::memcmp(
+            &stored_header,
+            &expected_header,
+            sizeof(BinaryHeader)
+        ) != 0) {
+        const std::size_t offset = first_differing_byte(
+            &stored_header,
+            &expected_header,
+            sizeof(BinaryHeader)
+        );
+
+        std::cerr
+            << "error: the stored header does not match the header that"
+            << " was written\n"
+            << "  first differing byte at offset "
+            << offset
+            << '\n'
+            << "  record_count already verified, so the damage is"
+            << " elsewhere in the header\n";
+
+        remove_temp_file(temp_path);
+        return 1;
+    }
+
     std::filesystem::rename(
         temp_path,
         output_path,
@@ -546,7 +726,8 @@ int main(int argc, char* argv[])
         << "  output:  " << output_path << '\n'
         << "  symbol:  " << symbol << '\n'
         << "  records: " << record_count << '\n'
-        << "  bytes:   " << expected_file_size << '\n';
+        << "  bytes:   " << expected_file_size << '\n'
+        << "  header:  read back and verified against 64 bytes\n";
 
     return 0;
 }
