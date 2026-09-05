@@ -107,24 +107,49 @@ producer a wake syscall on the critical path of its own send schedule.
 The lock-free arm never parks. Same machine, same rate, same scheduler
 floor: 88× fewer messages delayed past a microsecond.
 
+Worth naming what that 53.1% is, because the heading could mislead. It is
+not tail behaviour on the baseline arm — a cost paid on every other
+message is not a tail. It is the wait policy showing up in the bulk of the
+distribution, and it is visible here rather than in the percentiles
+because the percentiles are pinned to the scheduler floor described
+below.
+
 ### The scheduler floor: why p99.9 is not the headline here
 
-Dumping every sample above 1 µs and grouping them into stalls shows the
-same structure on both arms:
+Dumping every sample above 1 µs and grouping them into stalls:
 
-| | stalls/s | gap between stalls | messages per stall |
+| | stalls/s | messages per stall | worst latency in stall |
 |---|---|---|---|
-| spsc @ 1M/s | 398 | 2.12 ms | median 4, max 47 |
-| mutex-tuned @ 1M/s | 148 | 9.30 ms | median 4, max 75 |
-| spsc @ 100k/s | 346 | 1.14 ms | median 1, max 171 |
+| spsc @ 1M/s | 398 | median 4, max 47 | median 4.5 µs, max 46.8 µs |
+| mutex-tuned @ 1M/s | 148 | median 4, max 75 | median 4.2 µs, max 44.8 µs |
+| spsc @ 100k/s | 346 | median 1, max 171 | median 6.7 µs, max 1.18 ms |
 
-Slow messages arrive in **contiguous runs**, not in isolation: one event
-stalls the consumer for tens of microseconds and every message arriving
-during the stall is delivered late together. The stall rate is a few
-hundred per second regardless of arm or offered rate. That is the
-scheduler taking the CPU away — the same population found in timer
-calibration (§6.3) *before the queue existed*, in a loop that did nothing
-but read the clock twice.
+At 1M/s slow messages arrive in contiguous runs: one event stalls the
+consumer for several microseconds and every message arriving during it is
+delivered late together. At 100k/s the same stalls are mostly singletons,
+because ten times fewer messages arrive while the CPU is away.
+
+**Two hypotheses, and the data separates them.** A per-message cost — the
+sample buffer crossing a 16 KiB page every 1,024 entries, say — leaves
+index spacing unchanged when the offered rate changes. A per-time cost
+scales it with the rate. Running the SPSC arm at both rates:
+
+| Offered rate | stalls | messages per stall interval | stalls/s |
+|---|---|---|---|
+| 100k/s | 6,911 | 289 | 346 |
+| 1M/s | 795 | 2,516 | 398 |
+
+A 10× change in offered rate moves index spacing **8.7×** and stall rate
+1.15×. Per-message predicts 1.0 and 10; per-time predicts 10 and 1.0. It
+is per-time, and the page-crossing hypothesis is dead — that would have
+put stalls one per 1,024 records at both rates.
+
+That is the scheduler taking the CPU away, and it is the same population
+found in timer calibration *before the queue existed*, in a loop that did
+nothing but read the clock twice. Note that the stall rate differs by arm,
+398/s against 148/s at the same offered rate, so this is not one external
+metronome striking both equally. What is common is the mechanism and the
+~12 µs floor it puts under p99.9.
 
 So on this hardware the upper percentiles of both arms are dominated by
 the operating system, and the queue difference is only visible below
@@ -135,6 +160,15 @@ that shows up as a 12 µs floor on any latency distribution measured here.
 **It is a limit of the measurement platform, not a null result.** The
 mechanism was measured in calibration, predicted, and then observed in the
 pipeline.
+
+Two caveats on the numbers above. The `stall duration` column the analysis
+script prints is the span of *dequeue* timestamps across a cluster — how
+long the backlog took to drain, not how long the CPU was away — so the
+stall length quoted here is the worst latency inside each cluster instead.
+And the 100k runs last 20 s against the 1M runs' 2 s, so the 100k row has
+ten times the exposure to rare events; that is most of why its maximum is
+1.18 ms. p99.9 is insensitive to run length and the 12 µs floor is
+unaffected.
 
 ### B3 — parse cost against handoff cost
 
@@ -382,9 +416,34 @@ which is a no-op on unsigned arithmetic and would convert a millisecond
 backwards step into a ~585-year forward jump.
 
 The capture timestamp is taken *after* the Python websocket library hands
-the message up, so it carries interpreter and asyncio jitter of plausibly
-tens of µs. It is fine for replay pacing and burst shape. It is **not** an
-arrival timestamp.
+the message up, so it carries interpreter and asyncio jitter. It is fine
+for replay pacing and burst shape. It is **not** an arrival timestamp.
+
+**That jitter is measured, not estimated, and it is ~1 ms.** Binance's
+event time `E` is quantised to a millisecond and comes off the exchange's
+clock rather than this machine's, so a pair genuinely emitted *d* apart
+shares an exchange millisecond with probability 1 − *d*/1 ms under uniform
+phase — a prediction with a number on it. Cross-checking the ETHW capture
+bucket by bucket:
+
+| capture gap | pairs | share an `E` | predicted if genuine | genuine fraction | Δ`E` p90 |
+|---|---|---|---|---|---|
+| 1–10 µs | 8,500 | 40.9% | 99.3% | **0.41** | 18 ms |
+| 10–100 µs | 3,366 | 42.4% | 98.0% | **0.43** | 21 ms |
+| 100 µs – 1 ms | 3,051 | 12.6% | 54.5% | **0.23** | 29 ms |
+| > 10 ms | 32,958 | 0.02% | ~0% | — | 1,656 ms |
+
+The Δ`E` column needs no threshold to read: pairs the capture clock places
+1–10 µs apart are up to 18 ms apart at the exchange. Below a millisecond
+the capture clock is wrong by three to four orders of magnitude on a large
+fraction of pairs; at and above a millisecond it tracks, reproducing the
+capture-gap distribution to within 0.4% from p90 upward — 1,234 ms against
+1,238 ms, 3,723 against 3,723, 11,046 against 11,048. The 0.64 ms residual
+at p50 is smaller than `E`'s own millisecond quantum: Δ`E` is a difference
+of two integer-ms stamps, so a true 28.361 ms median can only render as 28
+or 29 depending on phase. That is a resolution floor, not a discrepancy.
+So coarse structure is trustworthy and sub-millisecond structure is not. **No
+latency measurement in this project depends on the capture clock.**
 
 ### Page warming and dataset handling
 
@@ -630,8 +689,8 @@ result and is expected to run against modified source.
 ## Limitations
 
 **The upper percentiles measure the operating system, not the queue.**
-Both arms sit on a ~12 µs floor from scheduler stalls arriving a few
-hundred times per second. Below p99.9 the queue difference is clean;
+Both arms sit on a ~12 µs floor from scheduler stalls arriving one to
+four hundred times per second, at a rate that differs by arm. Below p99.9 the queue difference is clean;
 at p99.9 it compresses to ~1.6×. Bare-metal Linux with thread pinning
 would resolve this; macOS offers no equivalent.
 
@@ -674,7 +733,31 @@ a reversal.
 LLVM/libc++. libstdc++ on ARM64 Linux remains the outstanding independent
 check, both for ThreadSanitizer and for the interference-size constants.
 
-**B2 is not complete.** The burst-replay compression factor needs the
-ETHW inter-arrival analysis, which is specified but not run. B3 is
-measured, by direct comparison rather than as an end-to-end arm — see
-above for why.
+**B2 is closed as an analysis result rather than a measurement.** The
+compression factor is 38,791, giving 100k msg/s mean offered load from the
+ETHW capture, chosen on peak windowed arrival rate rather than on mean
+rate — a mean does not fill a ring, a burst does. The burst-replay arm was
+specified and deliberately not run: simulating the compressed schedule
+against a constant drain gives a peak backlog of **137 slots out of
+16,384**, and the trace cannot fill the ring at any compression factor
+that also keeps the tuned baseline inside its validity range, because
+filling it would need peak sustained arrival to exceed the consumer's
+drain rate. The analysis reproduces the schedule builder's arithmetic
+bit-for-bit, so this is a computed result with committed provenance rather
+than an untested assumption. Reproduce it with
+`tools/inspect_interarrival.py`.
+
+**Compressed schedules contain ties.** The schedule builder truncates each
+compressed gap to integer nanoseconds before accumulating, so any captured
+gap shorter than the compression factor becomes exactly zero and the
+affected records share an intended-send offset — 20.9% of gaps at the
+chosen factor, essentially all of them below the capture clock's own
+resolution. The producer then issues those records back to back at its own
+~20 ns ceiling and the shortfall appears as producer lag rather than as
+schedule spacing. Gaps in the 100 µs – 1 ms band are ~77% capture artifact
+and do survive compression as 2.6–25.8 ns of spacing, most but not all of
+which is below that ceiling. Stated as contamination rather than waved
+off.
+
+B3 is measured, by direct comparison rather than as an end-to-end arm —
+see above for why.

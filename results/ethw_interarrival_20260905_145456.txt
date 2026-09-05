@@ -1,0 +1,194 @@
+
+======================================================================
+File:     captures/ethwusdt_futures_bookTicker_20260820_130813.log
+Messages: 55,775
+======================================================================
+
+0. CLOCK HYGIENE (§6.1a)
+
+  backwards capture-clock steps: 0
+  total clamped:                 0.0 ns
+
+  Zero backwards steps, so the cumulative clamped form and
+  the endpoint subtraction are provably equivalent for this
+  file. The clamp is still written as an explicit comparison
+  because the next capture may not have this property.
+
+1. RAW CAPTURE-GAP DISTRIBUTION
+
+  gaps:    55,774
+  min:     1.000 us
+  p50:     28.361 ms
+  p90:     1.238 s
+  p95:     1.829 s
+  p99:     3.723 s
+  p99.9:   7.014 s
+  max:     11.048 s
+  mean:    387.909 ms
+
+  mean/p50 ratio:           13.68x
+  coefficient of variation: 2.000   (Poisson = 1.0)
+
+  Cumulative fractions (item A — the sub-ms population split):
+    <=     1 us:    0.0090%   (5)
+    <=    10 us:   15.2490%   (8,505)
+    <=   100 us:   21.2841%   (11,871)
+    <=     1 ms:   26.7544%   (14,922)
+    <=    10 ms:   40.9079%   (22,816)
+    <=   100 ms:   58.6259%   (32,698)
+    >=     1 s:   13.8147%   (7,705)
+    >=     5 s:    0.4124%   (230)
+
+2. EXCHANGE-TIME CROSS-CHECK (item B - independent clock domain)
+
+  consecutive pairs:            55,774
+  E decreases (non-monotonic):  0
+  pairs sharing an exchange ms: 5,506   (9.8720%)
+
+  Overall delta E distribution, against section 1's capture gaps:
+                  exchange       capture
+    p50              29 ms         28 ms
+    p90           1,234 ms      1,238 ms
+    p99           3,723 ms      3,723 ms
+    p99.9         7,022 ms      7,014 ms
+    max          11,046 ms     11,048 ms
+
+  capture gap         pairs   share E  predicted     verdict    dE p50    dE p90
+  ------------------------------------------------------------------------------
+  <=     1 us             5    60.00%     99.90%       mixed        0m        3m
+  1 us - 10 us        8,500    40.89%     99.33%       mixed        1m       18m
+  10 us - 100 us      3,366    42.42%     98.03%       mixed        1m       21m
+  100 us -  1 ms      3,051    12.62%     54.47%      JITTER        1m       29m
+  1 ms -  10 ms       7,894     2.63%      0.00%         n/a        2m        9m
+  >     10 ms        32,958     0.02%      0.00%         n/a      356m    1,656m
+
+  predicted = 1 - (bucket mean gap)/1ms, the co-millisecond rate
+  a genuinely co-emitted pair must show given ms quantisation.
+  REAL: observed within 20% of it. JITTER: below 35% of it -
+  the pairs were further apart than the capture clock says.
+  n/a: predicted rate too low for the test to discriminate.
+  dE columns are in milliseconds, exchange clock.
+
+3. TIME-COMPRESSION TABLE (item C)
+
+  Compression divides every captured gap by C, per §6.5's
+  time-compression mechanism. C is derived here from a target
+  *mean* offered rate, and the achieved mean is reported back
+  because truncation makes them differ.
+
+  --- target mean 10,000 msg/s   ->   C = 3,879.1 ---
+    achieved mean rate:   10,000 msg/s
+    compressed span:      5.577 s   (from 21,635.233 s)
+
+    compressed p50:       7.311 us
+    compressed p90:       319.136 us
+    compressed p99:       959.869 us
+    compressed max:       2.848 ms
+
+    gaps truncated to 0:    1.4308%   (798)   <- identical intended-send offsets
+    < 20 ns (producer floor) 21.0618%   (11,747)
+    < 100 ns               24.1510%   (13,470)
+    < 500 ns               33.0548%   (18,436)
+    < 1 us                 36.7286%   (20,485)
+    < 5 us                 44.3074%   (24,712)
+
+    truncation loss:      26.862 us   (0.0005% of span)
+
+  --- target mean 100,000 msg/s   ->   C = 38,790.9 ---
+    achieved mean rate:   100,004 msg/s
+    compressed span:      557.715 ms   (from 21,635.233 s)
+
+    compressed p50:       731.0 ns
+    compressed p90:       31.913 us
+    compressed p99:       95.986 us
+    compressed max:       284.805 us
+
+    gaps truncated to 0:   20.8664%   (11,638)   <- identical intended-send offsets
+    < 20 ns (producer floor) 25.6015%   (14,279)
+    < 100 ns               36.7286%   (20,485)
+    < 500 ns               44.3074%   (24,712)
+    < 1 us                 54.0252%   (30,132)
+    < 5 us                 64.3221%   (35,875)
+
+    truncation loss:      24.825 us   (0.0045% of span)
+
+  --- target mean 500,000 msg/s   ->   C = 193,954.5 ---
+    achieved mean rate:   500,101 msg/s
+    compressed span:      111.525 ms   (from 21,635.233 s)
+
+    compressed p50:       146.0 ns
+    compressed p90:       6.382 us
+    compressed p99:       19.197 us
+    compressed max:       56.961 us
+
+    gaps truncated to 0:   22.4334%   (12,512)   <- identical intended-send offsets
+    < 20 ns (producer floor) 36.7286%   (20,485)
+    < 100 ns               44.3074%   (24,712)
+    < 500 ns               58.3103%   (32,522)
+    < 1 us                 64.3221%   (35,875)
+    < 5 us                 85.7245%   (47,812)
+
+    truncation loss:      22.599 us   (0.0203% of span)
+
+  --- target mean 1,000,000 msg/s   ->   C = 387,908.9 ---
+    achieved mean rate:   1,000,401 msg/s
+    compressed span:      55.752 ms   (from 21,635.233 s)
+
+    compressed p50:       73.0 ns
+    compressed p90:       3.191 us
+    compressed p99:       9.598 us
+    compressed max:       28.480 us
+
+    gaps truncated to 0:   24.1510%   (13,470)   <- identical intended-send offsets
+    < 20 ns (producer floor) 39.6439%   (22,111)
+    < 100 ns               54.0252%   (30,132)
+    < 500 ns               64.3221%   (35,875)
+    < 1 us                 71.5226%   (39,891)
+    < 5 us                 95.5087%   (53,269)
+
+    truncation loss:      22.364 us   (0.0401% of span)
+
+4. DOES THE COMPRESSED TRACE STRESS THE QUEUE?
+
+  Not in §6.5's specified analysis, and it is the section that
+  should decide C. B2 asks whether queue depth survives real
+  microbursts; a mean rate does not fill a ring, a burst does.
+
+  Two constraints pull against each other:
+    - the peak must be high enough to load a 16,384-slot ring
+    - both arms must stay valid, and the tuned mutex baseline
+      failed §6.4's producer-lag gate at 2.5M/s and above, so a
+      peak far past ~1M/s buys a sweep with no comparison in it
+
+  --- target mean 10,000 msg/s   (C = 3,879.1) ---
+    peak in  10.000 us window:        69 msgs  ->        6,900,000 msg/s instantaneous
+    peak in 100.000 us window:       104 msgs  ->        1,040,000 msg/s instantaneous
+    peak in   1.000 ms window:       224 msgs  ->          224,000 msg/s instantaneous
+
+    max backlog at 1,000,000 msg/s drain:        66   0.40% of capacity
+    max backlog at 10,000,000 msg/s drain:        56   0.34% of capacity
+
+  --- target mean 100,000 msg/s   (C = 38,790.9) ---
+    peak in  10.000 us window:       104 msgs  ->       10,400,000 msg/s instantaneous
+    peak in 100.000 us window:       224 msgs  ->        2,240,000 msg/s instantaneous
+    peak in   1.000 ms window:       801 msgs  ->          801,000 msg/s instantaneous
+
+    max backlog at 1,000,000 msg/s drain:       137   0.84% of capacity
+    max backlog at 10,000,000 msg/s drain:        66   0.40% of capacity
+
+  --- target mean 500,000 msg/s   (C = 193,954.5) ---
+    peak in  10.000 us window:       164 msgs  ->       16,400,000 msg/s instantaneous
+    peak in 100.000 us window:       575 msgs  ->        5,750,000 msg/s instantaneous
+    peak in   1.000 ms window:     2,007 msgs  ->        2,007,000 msg/s instantaneous
+
+    max backlog at 1,000,000 msg/s drain:     1,438   8.78% of capacity
+    max backlog at 10,000,000 msg/s drain:        86   0.52% of capacity
+
+  --- target mean 1,000,000 msg/s   (C = 387,908.9) ---
+    peak in  10.000 us window:       224 msgs  ->       22,400,000 msg/s instantaneous
+    peak in 100.000 us window:       802 msgs  ->        8,020,000 msg/s instantaneous
+    peak in   1.000 ms window:     3,296 msgs  ->        3,296,000 msg/s instantaneous
+
+    max backlog at 1,000,000 msg/s drain:     2,874   17.54% of capacity
+    max backlog at 10,000,000 msg/s drain:       138   0.84% of capacity
+
