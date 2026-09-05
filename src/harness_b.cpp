@@ -429,7 +429,8 @@ Datapoint run_datapoint(
     Arm arm,
     ConsumerMode mode,
     std::size_t pass,
-    RunBuffers& buffers
+    RunBuffers& buffers,
+    const char* dump_path = nullptr
 )
 {
     Datapoint point;
@@ -561,6 +562,38 @@ Datapoint run_datapoint(
         latencies.push_back(sample.dequeue_ns - intended);
     }
 
+    // §6.4b's actual reason for storing raw dequeue timestamps rather
+    // than computed latencies: the raw form answers *where in the run*
+    // the tail samples fell. Percentiles alone cannot distinguish a cost
+    // that recurs every N messages from one that recurs every T
+    // microseconds, and those have completely different causes.
+    //
+    // Only samples above the threshold are written. At p99.9 that is
+    // ~2000 rows out of 2,000,000, which is a small file rather than a
+    // 60 MB one, and the sub-threshold samples carry no information
+    // about the tail.
+    if (dump_path != nullptr) {
+        std::ofstream dump(dump_path, std::ios::app);
+
+        if (dump) {
+            for (std::uint64_t i = 0; i < delivered; ++i) {
+                if (latencies[i] < 1000) {
+                    continue;
+                }
+
+                const Sample& sample = buffers.samples[i];
+
+                dump
+                    << arm_name(arm) << ','
+                    << rate_hz << ','
+                    << i << ','
+                    << sample.sequence << ','
+                    << (sample.dequeue_ns - stats.t0_ns) << ','
+                    << latencies[i] << '\n';
+            }
+        }
+    }
+
     std::sort(latencies.begin(), latencies.end());
 
     point.p50_ns = percentile_of(latencies, 0.50);
@@ -606,6 +639,7 @@ struct Options {
     ConsumerMode consumer = ConsumerMode::Book;
     std::size_t passes = 3;
     bool spin_sweep = false;
+    bool dump_samples = false;
 
     // Which baseline configuration the full sweep runs. Both are
     // reported: 8192 is the tuned baseline §4 requires, 1000 is the
@@ -622,8 +656,8 @@ bool parse_options(int argc, char* argv[], Options& out)
             << "Usage:\n"
             << "  " << argv[0]
             << " <git-commit-40-hex> <dirty:0|1> <capture.bin> <SYMBOL>"
-               " [consumer:book|timestamp] [passes|spin-sweep]"
-               " [spin:1000|8192]\n";
+               " [consumer:book|timestamp]"
+               " [passes|spin-sweep|dump] [spin:1000|8192]\n";
         return false;
     }
 
@@ -665,6 +699,9 @@ bool parse_options(int argc, char* argv[], Options& out)
 
         if (sixth == "spin-sweep") {
             out.spin_sweep = true;
+            out.passes = 1;
+        } else if (sixth == "dump") {
+            out.dump_samples = true;
             out.passes = 1;
         } else {
             const long passes = std::strtol(argv[6], nullptr, 10);
@@ -818,6 +855,62 @@ int main(int argc, char* argv[])
     // blocking imposes on the *signaller*. If parking is expensive for the
     // producer, the ski-rental balance point is higher than 1000 and the
     // constant needs revising with that term included.
+    // ---------------------------------------------------------------
+    // Tail-sample dump
+    // ---------------------------------------------------------------
+    //
+    // The first three-pass sweep showed the SPSC arm at 83 ns p50, 125 ns
+    // p99, and ~12,000 ns p99.9 — two orders of magnitude between
+    // adjacent percentiles, at the same value whether the run lasted 20 s
+    // or 0.2 s. Nothing in a wait-free push and pop costs 12 us on one
+    // message in a thousand, so the cost is outside the queue. The same
+    // floor appears in both baseline configurations, so it is added to
+    // everything and it is what compresses the p99.9 comparison to 1.6x
+    // while p99 shows 3-27x.
+    //
+    // Two hypotheses with different signatures, which is why this dumps
+    // rather than guesses:
+    //
+    //   Per-message  — something recurring every N records, e.g. the
+    //                  sample buffer crossing a 16 KiB page every 1024
+    //                  entries, which is 0.0977% of messages and lands
+    //                  suspiciously close to p99.9. Slow samples would
+    //                  then be evenly spaced by *index* and the spacing
+    //                  would not change with offered rate.
+    //
+    //   Per-time     — a scheduler tick or timer interrupt. Slow samples
+    //                  would be evenly spaced in *time* and their index
+    //                  spacing would scale with the rate.
+    //
+    // Running the same arm at 100k and 1M separates them: a 10x change in
+    // rate leaves index spacing unchanged under the first hypothesis and
+    // changes it 10x under the second.
+    if (options.dump_samples) {
+        const std::string dump_path =
+            "results/tail_samples_" + utc_timestamp() + ".csv";
+
+        {
+            std::ofstream header(dump_path);
+            header << "arm,rate_hz,index,sequence,dequeue_offset_ns,latency_ns\n";
+        }
+
+        for (const double rate : {100'000.0, 1'000'000.0}) {
+            std::cerr << "dump  rate " << rate << "  arm spsc\n";
+            results.push_back(run_datapoint<SpscArm>(
+                slice, rate, Arm::Spsc, options.consumer, 0, buffers,
+                dump_path.c_str()
+            ));
+
+            std::cerr << "dump  rate " << rate << "  arm mutex-tuned\n";
+            results.push_back(run_datapoint<MutexTuned>(
+                slice, rate, Arm::Mutex, options.consumer, 0, buffers,
+                dump_path.c_str()
+            ));
+        }
+
+        std::cout << "wrote " << dump_path << '\n';
+    }
+
     if (options.spin_sweep) {
         constexpr double kDiagnosticRates[] = {
             500'000.0,
@@ -849,9 +942,10 @@ int main(int argc, char* argv[])
         }
     }
 
-    for (std::size_t pass = 0;
-         pass < (options.spin_sweep ? 0 : options.passes);
-         ++pass) {
+    const std::size_t sweep_passes =
+        (options.spin_sweep || options.dump_samples) ? 0 : options.passes;
+
+    for (std::size_t pass = 0; pass < sweep_passes; ++pass) {
         for (std::size_t r = 0; r < kRateCount; ++r) {
             // §5: alternate which arm runs first on each pass, so
             // thermal drift on a fanless M2 does not load onto whichever

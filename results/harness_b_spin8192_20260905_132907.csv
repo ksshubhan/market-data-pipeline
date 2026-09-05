@@ -1,0 +1,35 @@
+# experiment: b1
+# git_commit: 80c10eb5b11178e54c7e2b3fd8fa2d6fa99f1037
+# git_dirty: yes
+# utc: 20260905_132907
+# dataset: captures/btcusdt_futures_bookTicker_20260820_130813.bin
+# symbol: BTCUSDT
+# dataset_records: 13749492
+# slice_length: 2000000
+# capacity: 16384
+# consumer: book
+# passes: 1
+# qos_class: user_interactive
+# page_size: 16384 (apis_agree: yes)
+# warm_seconds: 1.53361
+# lap1_ms: 1.82662
+# lap2_ms: 1.70925
+# lap_ratio: 1.06867  (see note below)
+#
+# §6.4a records a lap1/lap2 floor of ~1.2, but that came from
+# traversing all 13.7M records. A 2M-record slice is ~112 MB,
+# far beyond the 16 MB L2, so both laps stream from DRAM and
+# there is no first-pass cache benefit to recover. A ratio at
+# 1.0 here means no residual paging, which is what warming
+# was for. It is not a failed check against the 1.2 floor.
+# spin_count: 8192 (tuned baseline — §4, spins past the inter-arrival gap)
+#
+# Latency is intended-send to consumer-dequeue. A datapoint is
+# valid only if dropped_records == 0 and p99 producer lag is
+# within one offered-rate period. Invalid rows are written
+# rather than deleted, with the gate that failed recorded.
+pass,arm,rate_hz,pushed,delivered,dropped_records,full_rejections,book_updates,spin_count,signals,parks,p50_lag_ns,p99_lag_ns,max_lag_ns,p50_ns,p90_ns,p99_ns,p999_ns,p9999_ns,max_ns,drop_gate,lag_gate,valid
+0,spsc,100000,2000000,2000000,0,0,2000000,0,0,0,0,42,807792,83,83,292,13542,327583,1176208,pass,pass,yes
+0,mutex,100000,2000000,2000000,0,0,2000000,8192,1976097,1034947,0,41,84416,4708,6458,11333,20291,44666,238833,pass,pass,yes
+0,spsc,1e+06,2000000,2000000,0,0,2000000,0,0,0,0,42,31750,84,84,125,7834,21375,46792,pass,pass,yes
+0,mutex,1e+06,2000000,2000000,0,0,2000000,8192,1998200,31,0,41,17666,166,166,208,916,15291,44791,pass,pass,yes
