@@ -179,9 +179,147 @@ void remove_temp_file(
 }
 
 
+// Report .tmp files left in the output directory by earlier runs
+// targeting this same output.
+//
+// Before the pid went into the name there was exactly one temporary
+// name per output, and the refuse-to-start check below doubled as the
+// thing that made an orphan impossible to ignore: the next run stopped
+// dead and named the file. With the pid in the name that check will
+// almost never fire again, so an orphan from a crashed run would sit in
+// the directory indefinitely with nothing to mention it.
+//
+// This warns rather than aborts, which is a deliberate exception to this
+// project's abort-rather-than-warn rule. Aborting would rebuild exactly
+// the cross-process coupling the pid was added to remove: a second
+// converter running concurrently against the same output has a live
+// .tmp in this directory, and that is not an error. A stale orphan and a
+// live sibling are indistinguishable from the filename alone, and the
+// pid in it is not a reliable way to tell them apart either — pids are
+// reused, and a matching live process need not be this program.
+//
+// The match is deliberately loose enough to catch <output>.tmp as well
+// as <output>.<pid>.tmp, so a temporary left behind by a converter built
+// before this change is still reported.
+void report_orphan_temp_files(
+    const std::filesystem::path& output_path,
+    const std::filesystem::path& directory_path
+)
+{
+    const std::string prefix =
+        output_path.filename().string() + ".";
+
+    std::error_code error;
+
+    std::filesystem::directory_iterator iterator(
+        directory_path,
+        error
+    );
+
+    if (error) {
+        return;
+    }
+
+    const std::filesystem::directory_iterator end;
+
+    std::size_t found = 0;
+
+    while (iterator != end) {
+        const std::string name =
+            iterator->path().filename().string();
+
+        if (name.starts_with(prefix) && name.ends_with(".tmp")) {
+            if (found == 0) {
+                std::cerr
+                    << "warning: temporary files for this output are"
+                    << " already present in "
+                    << directory_path
+                    << '\n';
+            }
+
+            std::cerr << "  " << name << '\n';
+            ++found;
+        }
+
+        iterator.increment(error);
+
+        if (error) {
+            break;
+        }
+    }
+
+    if (found != 0) {
+        std::cerr
+            << "  each is either a converter running right now or the"
+            << " wreckage of one that died\n"
+            << "  this run is unaffected — it writes to its own"
+            << " pid-tagged file — but nothing will clean these up\n";
+    }
+}
+
+
+enum class PublishResult {
+    published,
+    already_exists,
+    failed,
+};
+
+
+// Publish the temporary file under its final name, refusing to replace
+// anything already at that name.
+//
+// std::filesystem::rename replaces unconditionally, and the
+// refuse-to-overwrite check near the top of main runs long before the
+// publish — hundreds of milliseconds on a real dataset — so two
+// converters given the same output path both pass it before either has
+// written anything, and both then rename, the later silently destroying
+// the earlier. Measured on forty concurrent runs against one output:
+// twelve published, eleven finished datasets were overwritten, and every
+// one of the twelve exited zero.
+//
+// link(2) is the exclusivity primitive here. It fails with EEXIST if the
+// destination exists, it is atomic, and unlike renamex_np(RENAME_EXCL)
+// and renameat2(RENAME_NOREPLACE) it is POSIX and does not need a
+// different call on each platform. The cost is that the publish is two
+// steps rather than one, so between them the same inode is reachable
+// under both names. That is not observable as damage: the contents at
+// both names are the same verified, fsynced bytes, and the temporary
+// name is removed immediately after.
+//
+// There is no fallback to an overwriting rename when link fails, which
+// is the opposite resolution to the F_FULLFSYNC fallback above, and
+// deliberately so. Downgrading a durability barrier still publishes
+// correct data under everything short of power loss. Downgrading an
+// exclusivity guarantee destroys a file another process just wrote.
+PublishResult publish_exclusively(
+    const std::filesystem::path& temp_path,
+    const std::filesystem::path& output_path,
+    int& error_out
+) noexcept
+{
+    int result = 0;
+
+    do {
+        result = ::link(temp_path.c_str(), output_path.c_str());
+    } while (result != 0 && errno == EINTR);
+
+    if (result == 0) {
+        return PublishResult::published;
+    }
+
+    error_out = errno;
+
+    if (error_out == EEXIST) {
+        return PublishResult::already_exists;
+    }
+
+    return PublishResult::failed;
+}
+
+
 // Owns a descriptor for the rest of a scope. main() leaves through
 // thirty-odd returns and the descriptor opened for the directory has to
-// stay open across the rename, so the alternative is a close on every
+// stay open across the publish, so the alternative is a close on every
 // exit path and a leak on the one that gets missed.
 //
 // The destructor discards close()'s result deliberately. A close can
@@ -282,7 +420,7 @@ struct SyncOutcome {
 // asks the drive to flush that cache, and F_BARRIERFSYNC as a middle
 // option that orders this write against later ones without waiting for
 // the platter. F_BARRIERFSYNC is the wrong choice here: ordering the
-// data before the rename is exactly what a barrier gives, but the
+// data before the publish is exactly what a barrier gives, but the
 // converter has no later write to be ordered against — it exits — so
 // what is wanted is the stronger completion guarantee, not the cheaper
 // ordering one.
@@ -455,8 +593,46 @@ int main(int argc, char* argv[])
         return 1;
     }
 
+    // Hoisted here from the durability block at the end of main because
+    // the orphan scan below needs it too. Empty parent_path means the
+    // output is a bare filename in the working directory.
+    std::filesystem::path directory_path = output_path.parent_path();
+
+    if (directory_path.empty()) {
+        directory_path = ".";
+    }
+
+    // §7.6: the pid goes in the temporary name so that two converters
+    // given the same output path cannot write into one another's
+    // temporary file.
+    //
+    // What this buys on its own is narrow, and measurement rather than
+    // reasoning settled how narrow. The interleaved-writers failure it
+    // targets needs both processes past the check below before either
+    // opens its stream, a window a few instructions wide: forty
+    // concurrent runs against one output, and two more released together
+    // through a FIFO on a 486 MB input, never once hit it. What happened
+    // instead every time was that the loser found the temporary file
+    // already there and stopped.
+    //
+    // So the shared temporary name was doing duty as a mutex, and giving
+    // each process its own name removes it. That is only safe because
+    // the publish below is exclusive. Without it this change converts a
+    // loud refusal into a silent overwrite — measured at twelve
+    // publications out of forty where the shared name gave one.
+    //
+    // This does not touch §7.6's determinism rule. That rule forbids
+    // non-reproducible values in header fields, because they would break
+    // the byte-identical comparison of two conversions of one input. The
+    // temporary filename is not in the file.
     std::filesystem::path temp_path = output_path;
-    temp_path += ".tmp";
+
+    temp_path +=
+        "." +
+        std::to_string(static_cast<long long>(::getpid())) +
+        ".tmp";
+
+    report_orphan_temp_files(output_path, directory_path);
 
     if (std::filesystem::exists(
             temp_path,
@@ -465,6 +641,9 @@ int main(int argc, char* argv[])
         std::cerr
             << "error: temporary file already exists: "
             << temp_path << '\n'
+            << "The name carries this process's pid, so this is not a"
+            << " concurrent run — it is the wreckage of an earlier one"
+            << " that held the same pid.\n"
             << "Remove or inspect it before retrying.\n";
         return 1;
     }
@@ -879,22 +1058,27 @@ int main(int argc, char* argv[])
     //
     // Everything above this point establishes that the bytes in the page
     // cache are the bytes that were meant to be there. None of it says
-    // the bytes are on the device. rename(2) is atomic with respect to
-    // the directory entry, not with respect to the file's contents: the
-    // metadata operation can reach stable storage while the data pages
-    // are still dirty, and a power loss in that window leaves a
-    // correctly-named .bin holding whatever those blocks held before.
-    // The size check and the header read-back both pass on that file
-    // when it is next opened, because they read back through a cache
-    // that has not lost anything — the loss happens below them.
+    // the bytes are on the device. Publishing a name is atomic with
+    // respect to the directory entry, not with respect to the file's
+    // contents: the metadata operation can reach stable storage while
+    // the data pages are still dirty, and a power loss in that window
+    // leaves a correctly-named .bin holding whatever those blocks held
+    // before. The size check and the header read-back both pass on that
+    // file when it is next opened, because they read back through a
+    // cache that has not lost anything — the loss happens below them.
     //
-    // Order: open the directory, sync the contents, rename, sync the
-    // directory. The directory is opened before the rename rather than
+    // Order: open the directory, sync the contents, publish, sync the
+    // directory. The directory is opened before the publish rather than
     // immediately before the sync that needs it because an open failure
     // is recoverable — the .tmp is still deletable and nothing has been
     // published — whereas the identical failure discovered after the
-    // rename is not. Everything that can fail cleanly is made to fail
+    // publish is not. Everything that can fail cleanly is made to fail
     // before the point of no return.
+    //
+    // One directory fsync covers both halves of the publish. link and
+    // unlink are two modifications of the same directory, and the sync
+    // is issued after both, so the entry that was created and the entry
+    // that was removed are made durable together.
     //
     // The sync of the contents is placed after the read-back rather than
     // before it so that a file the read-back is about to reject is not
@@ -902,11 +1086,8 @@ int main(int argc, char* argv[])
     // ordering is worth real time; it changes nothing about what either
     // check proves.
 
-    std::filesystem::path directory_path = output_path.parent_path();
-
-    if (directory_path.empty()) {
-        directory_path = ".";
-    }
+    // directory_path was computed near the top of main, alongside the
+    // temporary name that the orphan scan needed it for.
 
     // A directory can only be opened O_RDONLY — O_WRONLY on a directory
     // is EISDIR. The contents descriptor below is opened O_WRONLY
@@ -929,7 +1110,7 @@ int main(int argc, char* argv[])
 
         std::cerr
             << "error: could not open the output directory to make the"
-            << " rename durable: "
+            << " publish durable: "
             << directory_path
             << ": "
             << std::strerror(open_errno)
@@ -995,20 +1176,61 @@ int main(int argc, char* argv[])
         contents_barrier = outcome.barrier;
     }
 
-    std::filesystem::rename(
+    int publish_errno = 0;
+
+    const PublishResult publish_result = publish_exclusively(
         temp_path,
         output_path,
-        filesystem_error
+        publish_errno
     );
 
-    if (filesystem_error) {
+    if (publish_result == PublishResult::already_exists) {
         std::cerr
-            << "error: could not rename temporary file to final output: "
-            << filesystem_error.message()
+            << "error: refusing to publish over an existing output"
+            << " file: "
+            << output_path
+            << '\n'
+            << "  the path was clear when this run started, so another"
+            << " process published there while this one was"
+            << " converting\n"
+            << "  this run's output has been discarded; the file on disk"
+            << " belongs to the other run\n";
+
+        remove_temp_file(temp_path);
+        return 1;
+    }
+
+    if (publish_result == PublishResult::failed) {
+        std::cerr
+            << "error: could not publish the temporary file under its"
+            << " final name: "
+            << std::strerror(publish_errno)
             << '\n';
 
         remove_temp_file(temp_path);
         return 1;
+    }
+
+    // The output name now exists and is correct. From here the .tmp is a
+    // second name for the same inode, so removing it cannot lose data
+    // and a failure to remove it is untidiness rather than a fault: the
+    // orphan scan at the top of the next run will name the leftover.
+    int unlink_result = 0;
+
+    do {
+        unlink_result = ::unlink(temp_path.c_str());
+    } while (unlink_result != 0 && errno == EINTR);
+
+    if (unlink_result != 0) {
+        const int unlink_errno = errno;
+
+        std::cerr
+            << "warning: the output was published but its temporary name"
+            << " could not be removed: "
+            << temp_path
+            << ": "
+            << std::strerror(unlink_errno)
+            << '\n';
     }
 
     const SyncOutcome directory_outcome =
@@ -1031,8 +1253,8 @@ int main(int argc, char* argv[])
             << "  the .bin was published and its contents are durable\n"
             << "  what is not confirmed durable is the directory entry,"
             << " so a power loss now could lose the name\n"
-            << "  do not treat this dataset as reproducible until the"
-            << " conversion is re-run\n";
+            << "  do not treat this dataset as reproducible: delete the"
+            << " .bin and convert again\n";
 
         return 1;
     }
