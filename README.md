@@ -650,6 +650,11 @@ cmake --preset default
 cmake --build --preset default
 ctest --test-dir build/default --output-on-failure
 
+# Inspect the raw capture before trusting it: precision and quantity
+# maxima, message counts, leading zeros, E monotonicity, and
+# capture-clock monotonicity, in one pass
+python3 tools/inspect_capture.py <capture.log>
+
 # Convert a capture to the binary dataset, then validate it exhaustively
 ./build/default/convert_capture <capture.log> <out.bin> BTCUSDT \
     $(git rev-parse HEAD) 0

@@ -11,4 +11,3 @@ compile_commands.json
 captures/
 /convert_capture
 results/tail_samples_*.csv
-.venv/
