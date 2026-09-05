@@ -1,0 +1,43 @@
+# experiment: b1_spin_sweep
+# git_commit: 73a26265171b78c250428b0ea43e02db403ebfc2
+# git_dirty: no
+# utc: 20260905_130613
+# dataset: captures/btcusdt_futures_bookTicker_20260820_130813.bin
+# symbol: BTCUSDT
+# dataset_records: 13749492
+# slice_length: 2000000
+# capacity: 16384
+# consumer: book
+# passes: 1
+# qos_class: user_interactive
+# page_size: 16384 (apis_agree: yes)
+# warm_seconds: 1.59494
+# lap1_ms: 4.10663
+# lap2_ms: 2.65692
+# lap_ratio: 1.54564  (see note below)
+#
+# §6.4a records a lap1/lap2 floor of ~1.2, but that came from
+# traversing all 13.7M records. A 2M-record slice is ~112 MB,
+# far beyond the 16 MB L2, so both laps stream from DRAM and
+# there is no first-pass cache benefit to recover. A ratio at
+# 1.0 here means no residual paging, which is what warming
+# was for. It is not a failed check against the 1.2 floor.
+# spin_count: 1000 (derived, §4)
+#
+# Latency is intended-send to consumer-dequeue. A datapoint is
+# valid only if dropped_records == 0 and p99 producer lag is
+# within one offered-rate period. Invalid rows are written
+# rather than deleted, with the gate that failed recorded.
+pass,arm,rate_hz,pushed,delivered,dropped_records,full_rejections,book_updates,spin_count,signals,parks,p50_lag_ns,p99_lag_ns,max_lag_ns,p50_ns,p90_ns,p99_ns,p999_ns,p9999_ns,max_ns,drop_gate,lag_gate,valid
+0,spsc,500000,2000000,2000000,0,0,2000000,0,0,0,0,41,43666,83,125,583,11583,23791,46458,pass,pass,yes
+0,mutex,500000,2000000,2000000,0,0,2000000,1000,1096849,848359,0,3166,38333,1916,4666,10625,19958,32458,46791,pass,FAIL,no
+0,mutex,500000,2000000,2000000,0,0,2000000,8192,1981683,1731,0,41,54500,166,166,1250,23458,41125,62750,pass,pass,yes
+0,mutex,500000,2000000,2000000,0,0,2000000,65536,1979706,186,0,167,56959,167,167,3125,28375,47625,65750,pass,pass,yes
+0,spsc,1e+06,2000000,2000000,0,0,2000000,0,0,0,0,41,55166,83,125,166,22083,37083,55208,pass,pass,yes
+0,mutex,1e+06,2000000,2000000,0,0,2000000,1000,1018982,646253,0,3208,44292,958,3417,9917,16333,41583,154583,pass,FAIL,no
+0,mutex,1e+06,2000000,2000000,0,0,2000000,8192,1983861,437,0,41,51708,166,166,416,16625,29875,59500,pass,pass,yes
+0,mutex,1e+06,2000000,2000000,0,0,2000000,65536,1980586,8,0,41,53250,166,166,1416,18291,31583,61875,pass,pass,yes
+0,spsc,5e+06,2000000,2000000,0,0,2000000,0,0,0,17,75,32425,92,117,117,11650,24559,32625,pass,pass,yes
+0,mutex,5e+06,2000000,2000000,0,0,2000000,1000,121929,69674,875,6075,35459,3800,6992,16067,27292,38250,45442,pass,FAIL,no
+0,mutex,5e+06,2000000,2000000,0,0,2000000,8192,66272,260,1200,5891,34266,4508,7175,13375,24575,39183,46833,pass,FAIL,no
+0,mutex,5e+06,2000000,2000000,0,0,2000000,65536,69851,3,1191,6358,49316,4541,7141,13150,27750,46816,69300,pass,FAIL,no

@@ -22,6 +22,34 @@
 // to derive the 70 ns calibration threshold from the single-boundary
 // model rather than picking a round number.
 //
+// ---------------------------------------------------------------------
+// The model this program implements is incomplete. Read this before
+// quoting its output as a spin count.
+// ---------------------------------------------------------------------
+//
+// It costs the *waiter* correctly and ignores what blocking costs the
+// *signaller*. When a consumer is parked, the producer's notify_one is a
+// __ulock_wake syscall on the critical path of the producer's own send
+// schedule — and in a queue whose producer must never be delayed, that
+// term dominates the one this program optimises.
+//
+// harness_b's spin-sweep measured the omitted term directly. At 1M
+// records/s, the 1000 derived here parked on 646,253 of 2,000,000
+// messages and cost the producer 3208 ns of p99 lag; 8192 parked 437
+// times and cost 41 ns. MutexQueue's default is 8192 for that reason,
+// justified by the inter-arrival gap across B1's sweep rather than by
+// the bound below.
+//
+// The numbers this program produces are still correct and still worth
+// having: park/wake really is ~1296 ns on this machine, and that figure
+// is what makes the 646,253 parks legible as a cost. What was wrong was
+// the inference from them to a spin count, not the measurement.
+//
+// Kept rather than deleted, and kept wrong-side-up on purpose: the
+// derivation, the term it missed, and the experiment that caught it are
+// a better answer to "how did you choose that constant" than a number
+// that happened to be right.
+//
 // Three measurements, and the third is the one with a caveat:
 //
 //   1. Condvar ping-pong. Strict alternation through mutex +

@@ -606,17 +606,24 @@ struct Options {
     ConsumerMode consumer = ConsumerMode::Book;
     std::size_t passes = 3;
     bool spin_sweep = false;
+
+    // Which baseline configuration the full sweep runs. Both are
+    // reported: 8192 is the tuned baseline §4 requires, 1000 is the
+    // parking configuration §3 describes as catastrophic on the tail.
+    // Neither alone is the result.
+    int spin = 8192;
 };
 
 
 bool parse_options(int argc, char* argv[], Options& out)
 {
-    if (argc < 5 || argc > 7) {
+    if (argc < 5 || argc > 8) {
         std::cerr
             << "Usage:\n"
             << "  " << argv[0]
             << " <git-commit-40-hex> <dirty:0|1> <capture.bin> <SYMBOL>"
-               " [consumer:book|timestamp] [passes|spin-sweep]\n";
+               " [consumer:book|timestamp] [passes|spin-sweep]"
+               " [spin:1000|8192]\n";
         return false;
     }
 
@@ -669,6 +676,21 @@ bool parse_options(int argc, char* argv[], Options& out)
             }
 
             out.passes = static_cast<std::size_t>(passes);
+        }
+    }
+
+    if (argc == 8) {
+        const std::string spin_text = argv[7];
+
+        if (spin_text == "1000") {
+            out.spin = 1000;
+        } else if (spin_text == "8192") {
+            out.spin = 8192;
+        } else {
+            std::cerr
+                << "error: spin must be 1000 (parking baseline) or 8192"
+                   " (tuned baseline)\n";
+            return false;
         }
     }
 
@@ -767,7 +789,8 @@ int main(int argc, char* argv[])
     results.reserve(options.passes * kRateCount * 2);
 
     using SpscArm = SpscRingBuffer<Record, kCapacity>;
-    using MutexArm = MutexQueue<Record, kCapacity>;
+    using MutexParking = MutexQueue<Record, kCapacity, 1000>;
+    using MutexTuned = MutexQueue<Record, kCapacity, 8192>;
 
     // ---------------------------------------------------------------
     // Spin-sweep diagnostic
@@ -848,8 +871,13 @@ int main(int argc, char* argv[])
                         slice, kRates[r], Arm::Spsc,
                         options.consumer, pass, buffers
                     ));
+                } else if (options.spin == 1000) {
+                    results.push_back(run_datapoint<MutexParking>(
+                        slice, kRates[r], Arm::Mutex,
+                        options.consumer, pass, buffers
+                    ));
                 } else {
-                    results.push_back(run_datapoint<MutexArm>(
+                    results.push_back(run_datapoint<MutexTuned>(
                         slice, kRates[r], Arm::Mutex,
                         options.consumer, pass, buffers
                     ));
@@ -859,8 +887,10 @@ int main(int argc, char* argv[])
     }
 
     const std::string path =
-        (options.spin_sweep ? "results/spin_sweep_" : "results/harness_b_") +
-        utc_timestamp() + ".csv";
+        options.spin_sweep
+            ? "results/spin_sweep_" + utc_timestamp() + ".csv"
+            : "results/harness_b_spin" + std::to_string(options.spin) +
+              "_" + utc_timestamp() + ".csv";
 
     std::ofstream out(path);
 
@@ -899,7 +929,11 @@ int main(int argc, char* argv[])
         << "# there is no first-pass cache benefit to recover. A ratio at\n"
         << "# 1.0 here means no residual paging, which is what warming\n"
         << "# was for. It is not a failed check against the 1.2 floor.\n"
-        << "# spin_count: " << "1000 (derived, §4)\n"
+        << "# spin_count: " << options.spin
+        << (options.spin == 1000
+                ? " (parking baseline — §3's blocking condvar)\n"
+                : " (tuned baseline — §4, spins past the inter-arrival"
+                  " gap)\n")
         << "#\n"
         << "# Latency is intended-send to consumer-dequeue. A datapoint is\n"
         << "# valid only if dropped_records == 0 and p99 producer lag is\n"

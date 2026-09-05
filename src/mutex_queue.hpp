@@ -14,7 +14,7 @@
 // derived 1000 documented at kSpinCount below; harness_b's spin-sweep
 // mode instantiates other values to test whether producer lag in the
 // baseline arm is caused by wake syscalls.
-template <typename T, std::size_t Capacity, int SpinCount = 1000>
+template <typename T, std::size_t Capacity, int SpinCount = 8192>
 class MutexQueue {
     static_assert(Capacity > 0);
     static_assert(
@@ -185,58 +185,50 @@ public:
     }
 
 private:
-    // Derived, not fitted. §4's "tuned" is earned as of 4 Sep.
+    // §4's spin budget. Default 8192, measured — and the number it
+    // replaces is kept here because the way the first answer was wrong
+    // is worth more than the answer.
     //
-    // Spinning on an empty queue is worth doing only while it costs less
-    // than blocking would. Spin for exactly the cost of a park and wake
-    // and the worst case is twice the optimal offline choice — the
-    // ski-rental bound. So the constant is park/wake cost divided by the
-    // cost of one iteration of the loop above, and both are measurable:
-    // src/measure_condvar_wakeup.cpp measures them.
+    // First attempt, 4 Sep: derive it from the ski-rental bound. Spinning
+    // is worth doing only while it costs less than blocking, so spin for
+    // exactly the cost of a park and wake and the worst case is twice
+    // optimal. measure_condvar_wakeup measured park/wake at ~1296 ns and
+    // a spin iteration at ~1.29 ns, giving 1004, rounded to 1000.
     //
-    // This replaces §4's original method, which was to fit the constant
-    // to the distribution of empty-queue intervals observed in B1. That
-    // is circular — the tuned baseline is what produces B1 — and it
-    // would make the constant depend on which offered rates happened to
-    // be swept. Deriving it matches the house style §6.3 set by taking
-    // the 70 ns calibration threshold from the single-boundary model
-    // rather than picking a round number.
+    // That model was incomplete. It costs the *waiter* correctly and
+    // ignores what blocking costs the *signaller*: when a consumer is
+    // parked, the producer's notify_one becomes a __ulock_wake syscall on
+    // the critical path of its own send schedule. In a queue whose
+    // producer must never be delayed, that term dominates the one the
+    // model optimised.
     //
-    // Measured on the M2, six runs at commit c28e248, QoS applied, mains
-    // power:
+    // The spin sweep measured it directly (results/spin_sweep_*.csv).
+    // At 1M records/s, spin 1000 parked on 646,253 of 2,000,000 messages
+    // and the producer's p99 lag was 3208 ns; spin 8192 parked 437 times
+    // and p99 lag was 41 ns. A 78x reduction in producer lag, tracking a
+    // 1479x reduction in parks. Consumer p99 latency fell with it, from
+    // 9917 ns to 416 ns.
     //
-    //   park/wake cost              1272-1322 ns  (median ~1296)
-    //   spin iteration, contended   1.291-1.301 ns in 5 of 6 runs
-    //   derived count               982, 985, 1004, 1007, 1023
+    // 8192 iterations is ~10.6 us of spinning, which exceeds the
+    // inter-arrival gap at every offered rate at or above ~95k/s — the
+    // whole of B1's sweep. That is the justification: a bound covering
+    // the sweep, not a fitted crossover. 65536 was also measured and
+    // changes nothing (parks 8 vs 437 at 1M, p99 lag identical), so 8192
+    // is on the flat part of the curve rather than at its edge.
     //
-    // A sixth run reported a contended iteration of 0.966 ns and a
-    // derived 1323; it is recorded rather than dropped, but five samples
-    // within 0.7% of each other identify it as the outlier.
+    // What this does NOT fix, and §4 should not pretend otherwise: above
+    // ~2.5M/s the spin budget stops mattering entirely. At 5M/s, parks
+    // fall from 69,674 to 3 across the same sweep and producer p99 lag
+    // does not move (5891 vs 6358 ns). There the cost is the lock itself,
+    // not the wait policy, and the baseline's ceiling is real.
     //
-    // 1000 is the median rounded. The rounding is not the thing §6.3
-    // warns against: the derivation produces 1004, and 1000 is the same
-    // number within the resolution of the method rather than a figure
-    // chosen for looking tidy.
-    //
-    // Two known biases, both pointing the same way. park/wake was
-    // measured with cores free, so under B1's load — where the
-    // producer's pacing spin occupies one — a wake may queue behind it
-    // and cost more. And the contended iteration was measured against a
-    // writer in a tight store loop, harsher than a producer doing work
-    // between stores, so 1.29 ns likely overstates it. Numerator low,
-    // denominator high: the true optimum is above 1004, not below.
-    //
-    // That direction is also the safer one to err in, which is not
-    // symmetric and is worth knowing. With spin budget S and blocking
-    // cost B, undershooting degrades as 1 + B/S while overshooting
-    // degrades as 1 + S/B. At S = B/5 the worst case is 6x optimal; at
-    // S = 2B it is only 3x.
-    //
-    // Which is what was wrong with the provisional 200. At 1.29 ns an
-    // iteration that was 258 ns of spinning against a 1296 ns blocking
-    // cost — roughly B/5, the bad end of that curve. It paid a 1.3 us
-    // park and wake to avoid about 1 us of spinning, on every empty
-    // queue. "Did the tuning matter" has a number behind it now.
+    // SpinCount stays a template parameter because 1000 remains a
+    // reportable configuration, not dead code. A condvar queue that
+    // blocks is what §3 describes as catastrophic on the tail, and
+    // tuning it away is exactly what §4 requires — so both are run and
+    // both are reported. Reporting only the tuned arm understates the
+    // mechanism the project is about; reporting only the parking arm is
+    // the strawman §4 forbids.
     static constexpr int kSpinCount = SpinCount;
 
     // Racy reads used only to decide whether to take the lock. See
