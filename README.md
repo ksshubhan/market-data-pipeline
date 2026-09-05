@@ -612,7 +612,20 @@ Python implementation using `decimal.Decimal` — not the C++ parser, so a
 shared digit-counting bug cannot cancel itself out. A deliberate one-byte
 corruption of the binary was detected and named. A deliberately malformed
 input caused the converter to fail loudly and leave neither `.bin` nor
-`.bin.tmp` behind.
+`.bin.<pid>.tmp` behind.
+
+**The published `.bin` is durable, and publishing it is exclusive.** The
+temporary file is flushed with `F_FULLFSYNC` before it is published,
+not `fsync`: on Darwin `fsync` hands the data to the drive and returns,
+leaving it free to sit in the drive's own volatile write cache, and
+`F_FULLFSYNC` is the call that asks for that cache to be flushed.
+Publishing is `link` then `unlink` rather than `rename`, because
+`rename` replaces whatever is at the destination and the
+refuse-to-overwrite check runs at startup, hundreds of milliseconds
+earlier. Forty converters launched at once against one output path: one
+publishes, the rest are refused, five of them by the publish itself. The
+same forty against a build that renamed instead published twelve times
+and kept the last.
 
 **Properties of the feed, recorded rather than assumed.** Over all
 13,749,492 records: `T <= E` holds universally — 78% have `T == E`, 22%
