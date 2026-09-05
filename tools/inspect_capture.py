@@ -1,3 +1,44 @@
+#!/usr/bin/env python3
+"""The routine capture inspector — §7.0.
+
+One pass over a capture .log, reporting everything routinely known about
+it: fractional-digit maxima, quantity maxima, raw-line against
+payload-message counts, unusual leading zeros, E monotonicity, and
+capture-clock monotonicity with backwards-step magnitudes.
+
+§7.0 wants exactly one command that does this, rather than a per-check
+script accreting for each new question. The rule is about lifecycle, not
+line count: this is the *gate*, run on every capture before anything
+downstream is trusted, and it stays the single routine inspector.
+tools/inspect_interarrival.py is a different kind of thing — a closed
+one-off study whose output is a committed artifact of B2 — and keeping it
+separate is not accretion.
+
+WHAT THIS FILE WAS MISSING UNTIL 5 SEP, AND WHY IT MATTERED.
+
+It was named inspect_capture_precision.py and did five of the six checks
+above. Capture-clock monotonicity was absent: the capture timestamp was
+parsed only to confirm it was an integer, then discarded. §7.0 and §6.1a
+both described this file as reporting it, and §6.1a built an instruction
+on top of that description — read the backwards-step count before
+building the pacer, and if it is zero, assert that at load time. That
+instruction was not executable from the tool it named.
+
+The count did exist, but in inspect_interarrival.py, which was only ever
+run against ETHW. So the BTC capture — the file every B1 datapoint
+replays — had never had its clock checked at all.
+
+Nothing reported was affected: harness B paces from
+build_fixed_rate_schedule, which ignores captured gaps entirely, and B2
+was closed as an analysis rather than run. But this is the third defect
+of the same kind after §6.5a's gap reconciliation and §7.3a's
+capture_index formula — prose describing code, read many times and
+executed zero times.
+
+Usage:
+    python3 tools/inspect_capture.py <capture.log> [capture.log ...]
+"""
+
 import json
 import sys
 from decimal import Decimal
@@ -74,6 +115,20 @@ def inspect_capture(path: Path) -> None:
     leading_zero_count = 0
     leading_zero_examples = []
 
+    # Capture-clock hygiene, §6.1a. The capture timestamp comes from
+    # Python's time.time_ns() — CLOCK_REALTIME, NTP-disciplined, and
+    # therefore able to step backwards mid-capture.
+    #
+    # Tracked over the *payload* sequence rather than over raw lines,
+    # because that is the sequence the converter writes and therefore the
+    # one build_replay_schedule consumes. A non-payload line between two
+    # payload messages is not a gap in the schedule.
+    previous_capture_ns = None
+    backwards_steps = 0
+    clamped_ns = 0
+    largest_backwards_step_ns = 0
+    backwards_step_examples = []
+
     non_payload_examples = []
 
     with path.open() as file:
@@ -85,8 +140,10 @@ def inspect_capture(path: Path) -> None:
                     line.rstrip("\n").split("\t", 1)
                 )
 
-                # Validate that the capture-side timestamp is numeric.
-                int(capture_timestamp)
+                # Kept, not discarded: this is the clock §6.1a is
+                # about, and it used to be parsed only to prove it was
+                # an integer.
+                capture_ns = int(capture_timestamp)
 
                 message = json.loads(raw_message)
 
@@ -192,6 +249,38 @@ def inspect_capture(path: Path) -> None:
 
                 previous_event_time = event_time
 
+                # Capture-clock ordering. Written as an explicit
+                # comparison for the same reason replay_schedule.cpp
+                # writes it that way: in C++ these are uint64_t, so a
+                # backwards step wraps rather than going negative and
+                # max(0, b - a) would pass a value near 2^64 straight
+                # through. Python has no such trap, and the check is
+                # written in the same shape anyway so the two read alike
+                # and the clamped total is directly comparable to
+                # ReplaySchedule::clamped_ns.
+                if previous_capture_ns is not None:
+                    if capture_ns < previous_capture_ns:
+                        step = previous_capture_ns - capture_ns
+
+                        backwards_steps += 1
+                        clamped_ns += step
+
+                        largest_backwards_step_ns = max(
+                            largest_backwards_step_ns, step
+                        )
+
+                        if len(backwards_step_examples) < 5:
+                            backwards_step_examples.append(
+                                (
+                                    line_number,
+                                    previous_capture_ns,
+                                    capture_ns,
+                                    step,
+                                )
+                            )
+
+                previous_capture_ns = capture_ns
+
                 bookticker_count += 1
 
             except Exception as error:
@@ -252,6 +341,33 @@ def inspect_capture(path: Path) -> None:
             f"{previous_e} -> {current_e}"
         )
 
+    print()
+
+    print("Capture-clock hygiene (\u00a76.1a):")
+    print(f"  backwards steps:       {backwards_steps}")
+    print(f"  total clamped:         {clamped_ns} ns")
+    print(f"  largest single step:   {largest_backwards_step_ns} ns")
+
+    for example in backwards_step_examples:
+        line_number, previous_ns, current_ns, step = example
+        print(
+            f"    line {line_number}: "
+            f"{previous_ns} -> {current_ns}  (back {step} ns)"
+        )
+
+    if backwards_steps == 0:
+        print()
+        print("  Zero backwards steps, so for this file the cumulative")
+        print("  clamped form and a plain endpoint subtraction are")
+        print("  provably equivalent. Assert that at load time rather")
+        print("  than assuming it; the next capture may differ. The")
+        print("  clamp stays an explicit comparison regardless.")
+    else:
+        print()
+        print("  NTP stepped the capture clock backwards during this")
+        print("  capture. The endpoint form is NOT equivalent here: it")
+        print("  would silently re-absorb every gap the clamp removed.")
+
     if non_payload_examples:
         print()
         print("Non-payload examples:")
@@ -265,7 +381,7 @@ def inspect_capture(path: Path) -> None:
 if __name__ == "__main__":
     if len(sys.argv) < 2:
         print(
-            "Usage: python tools/inspect_capture_precision.py "
+            "Usage: python3 tools/inspect_capture.py "
             "<capture_file> [capture_file ...]"
         )
         sys.exit(1)

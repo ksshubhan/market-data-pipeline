@@ -1,0 +1,39 @@
+
+======================================================================
+File: captures/btcusdt_futures_bookTicker_20260820_130813.log
+Symbol: BTCUSDT
+
+Message counts:
+  raw lines:             13749492
+  bookTicker messages:   13749492
+  non-payload messages:  0
+
+Maximum fractional digits:
+  bid price: 2
+  ask price: 2
+  bid qty:   3
+  ask qty:   3
+  overall:   3
+
+Maximum quantities:
+  bid qty:   285.788
+  ask qty:   390.962
+  overall:   390.962
+
+Leading-zero check:
+  unusual values: 0
+
+Event-time ordering:
+  E decreases: 0
+
+Capture-clock hygiene (§6.1a):
+  backwards steps:       0
+  total clamped:         0 ns
+  largest single step:   0 ns
+
+  Zero backwards steps, so for this file the cumulative
+  clamped form and a plain endpoint subtraction are
+  provably equivalent. Assert that at load time rather
+  than assuming it; the next capture may differ. The
+  clamp stays an explicit comparison regardless.
+======================================================================

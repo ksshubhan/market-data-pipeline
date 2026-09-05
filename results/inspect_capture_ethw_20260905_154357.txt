@@ -1,0 +1,39 @@
+
+======================================================================
+File: captures/ethwusdt_futures_bookTicker_20260820_130813.log
+Symbol: ETHWUSDT
+
+Message counts:
+  raw lines:             55775
+  bookTicker messages:   55775
+  non-payload messages:  0
+
+Maximum fractional digits:
+  bid price: 6
+  ask price: 6
+  bid qty:   0
+  ask qty:   0
+  overall:   6
+
+Maximum quantities:
+  bid qty:   72184
+  ask qty:   31278
+  overall:   72184
+
+Leading-zero check:
+  unusual values: 0
+
+Event-time ordering:
+  E decreases: 0
+
+Capture-clock hygiene (§6.1a):
+  backwards steps:       0
+  total clamped:         0 ns
+  largest single step:   0 ns
+
+  Zero backwards steps, so for this file the cumulative
+  clamped form and a plain endpoint subtraction are
+  provably equivalent. Assert that at load time rather
+  than assuming it; the next capture may differ. The
+  clamp stays an explicit comparison regardless.
+======================================================================
