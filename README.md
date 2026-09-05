@@ -136,6 +136,46 @@ that shows up as a 12 µs floor on any latency distribution measured here.
 mechanism was measured in calibration, predicted, and then observed in the
 pipeline.
 
+### B3 — parse cost against handoff cost
+
+Batched timing over 200,000 real captured messages, 20 rounds,
+interleaved, median reported.
+
+| | ns per message |
+|---|---|
+| `parse_book_ticker` over captured JSON | **161.5** |
+| Full push + pop through the SPSC ring, single-threaded | 5.83 |
+| 56-byte `CaptureRecord` assignment (the pre-parsed path) | 0.93 |
+
+**Parse cost dominates handoff cost by 27.7×** — which is why real venues
+ship binary protocols rather than JSON.
+
+Three qualifications, because the number flatters the parser otherwise.
+
+The handoff arm is **single-threaded**, so it pays no cross-core coherence
+traffic and is a *lower bound* on a real handoff. A1b's two-thread figure
+is ~30 ns/handoff, against which the ratio is ~5.4×. The lower bound is
+the honest comparison to lead with: if parse dominates the cheapest
+possible handoff, it dominates the real one.
+
+**This is a schema-specific key scanner, not a general JSON parser.** It
+assumes a known Binance bookTicker layout and does a single left-to-right
+pass with no DOM, no allocation and no floating point. 161 ns is far below
+the 1,000–3,000 ns a generic JSON library would cost, so this figure must
+not be quoted as "the cost of JSON parsing".
+
+The 0.93 ns copy figure is a **floor, not a like-for-like third arm** — a
+56-byte assignment in a tight loop over a resident array, where the
+compiler is free to keep everything in registers. It bounds what the
+pre-parsed path can cost; it is not what the producer pays per record in
+context.
+
+B3 is measured this way rather than as an end-to-end `--parse-in-ingest`
+arm because a ~161 ns parse would be invisible inside a distribution whose
+upper percentiles sit on a 12 µs scheduler floor. Batching answers a
+question about a mean at far higher resolution — which is the same
+reasoning that split the harnesses in the first place.
+
 ### A-series microbenchmarks
 
 Two-thread queue microbenchmark, batched timing, 10M handoffs per arm.
@@ -444,6 +484,15 @@ within-arm spread on A1 from 21.1% to 5.0%.
 
 ## Correctness evidence
 
+**The clean result means something because the control fires.** Running
+the deliberately-broken C1 arm in the same TSan build produces a data race
+naming `spsc_ring_buffer.hpp:130` (the payload read in `try_pop`) against
+`spsc_ring_buffer.hpp:100` (the payload store in `try_push`) — the two
+non-atomic accesses that acquire/release exists to order. Not the index:
+the payload. The report is committed at `evidence/c1_tsan_report.txt`.
+A "TSan clean" claim with no verified negative control says only that the
+tool was quiet.
+
 **ThreadSanitizer clean on the valid arms**, on two toolchains (Homebrew
 clang and AppleClang). Both are LLVM/libc++ lineage, so this is stated as
 "two LLVM toolchains" rather than as independent confirmation; libstdc++
@@ -500,6 +549,19 @@ shared digit-counting bug cannot cancel itself out. A deliberate one-byte
 corruption of the binary was detected and named. A deliberately malformed
 input caused the converter to fail loudly and leave neither `.bin` nor
 `.bin.tmp` behind.
+
+**Properties of the feed, recorded rather than assumed.** Over all
+13,749,492 records: `T <= E` holds universally — 78% have `T == E`, 22%
+have `T < E` with a maximum lag of 30 ms, and **no record has `T > E`**.
+Both fields are `uint64` on the wire, so `E - T` underflows rather than
+going negative; the check compares operands rather than testing the sign
+of a difference, which is the same unsigned trap the replay clamp
+documents. Minimum quantity is 0.001 on both sides with no zeros, which
+independently corroborates BTCUSDT's `stepSize` from the `exchangeInfo`
+snapshot. **No crossed or locked books in the entire capture** — bid is
+strictly below ask on every message, which also rules out the
+case-sensitivity trap where a `tolower` in the key path silently swaps
+price and quantity.
 
 **Byte-identical output across two conversions** six days apart on
 different commits: 13,749,492 records identical, with only the provenance
@@ -612,5 +674,7 @@ a reversal.
 LLVM/libc++. libstdc++ on ARM64 Linux remains the outstanding independent
 check, both for ThreadSanitizer and for the interference-size constants.
 
-**B2 and B3 are not complete.** The burst-replay compression factor and
-the parse-in-ingest comparison are specified but not measured.
+**B2 is not complete.** The burst-replay compression factor needs the
+ETHW inter-arrival analysis, which is specified but not run. B3 is
+measured, by direct comparison rather than as an end-to-end arm — see
+above for why.
