@@ -46,6 +46,11 @@ add_executable(measure_condvar_wakeup
     src/measure_condvar_wakeup.cpp
 )
 
+add_executable(measure_parse_cost
+    src/measure_parse_cost.cpp
+    src/parser.cpp
+)
+
 add_executable(harness_b
     src/harness_b.cpp
     src/capture_file.cpp
