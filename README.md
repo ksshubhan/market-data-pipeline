@@ -33,6 +33,22 @@ market moved, because bursts and volatility arrive together.
 
 ## Results
 
+![p99.9 latency vs offered load](results/b1_latency_vs_load.png)
+
+*p99.9 end-to-end latency against offered rate, log/log, median of three
+passes, valid datapoints only. The three lines converge because all three
+sit on the same ~12 µs scheduler floor — see [the scheduler
+floor](#the-scheduler-floor-why-p999-is-not-the-headline-here). The
+baselines stop where they fail the producer-lag gate: the parking
+configuration above 250k/s, the tuned one above 1M/s.*
+
+![latency distribution](results/b1_percentile_distribution.png)
+
+*The same three configurations across p50 to max at a single offered
+rate. The gap is widest at p50 and p99 and closes as the scheduler floor
+takes over — which is the whole story of this measurement in one
+picture.*
+
 All figures from an Apple M2 (4 P-cores + 4 E-cores, fanless), mains
 power, Low Power Mode off, `QOS_CLASS_USER_INTERACTIVE` requested and
 **read back** on every measurement thread. Full environment dumps in

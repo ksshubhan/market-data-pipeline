@@ -10,3 +10,5 @@ compile_commands.json
 .cache/
 captures/
 /convert_capture
+results/tail_samples_*.csv
+.venv/

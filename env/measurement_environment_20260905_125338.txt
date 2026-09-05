@@ -1,0 +1,47 @@
+=== measurement environment ===
+utc_timestamp: 2026-09-05T12:53:38Z
+
+=== repository ===
+git_commit: 30f619d592e2e2648dd0770953543821a6801d51
+git_dirty: no
+
+=== hardware ===
+hw.cachelinesize: 128
+hw.perflevel0.logicalcpu: 4
+hw.perflevel1.logicalcpu: 4
+hw.l1dcachesize: 65536
+hw.l2cachesize: 4194304
+hw.perflevel0.l1dcachesize: 131072
+hw.perflevel0.l2cachesize: 16777216
+hw.perflevel1.l1dcachesize: 65536
+hw.perflevel1.l2cachesize: 4194304
+hw.memsize: 17179869184
+machdep.cpu.brand_string: Apple M2
+
+=== operating system ===
+ProductName:		macOS
+ProductVersion:		26.6.2
+BuildVersion:		25G83
+
+=== compiler ===
+Homebrew clang version 22.1.8
+Target: arm64-apple-darwin25.6.0
+Thread model: posix
+InstalledDir: /opt/homebrew/Cellar/llvm/22.1.8/bin
+Configuration file: /opt/homebrew/Cellar/llvm/22.1.8/etc/clang/arm64-apple-darwin25.cfg
+
+=== sdk ===
+sdk_path: /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk
+sdk_version: 26.5
+
+=== power ===
+Now drawing from 'AC Power'
+ -InternalBattery-0 (id=36110435)	100%; charged; 0:00 remaining present: true
+low_power_mode: 0
+
+=== c++ environment ===
+sysconf(_SC_PAGESIZE): 16384
+sysctlbyname(hw.pagesize): 16384
+_LIBCPP_VERSION: 220108
+hardware_destructive_interference_size: 256
+hardware_constructive_interference_size: 64
