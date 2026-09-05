@@ -532,16 +532,21 @@ python3 tools/validate_capture.py <capture.log> <out.bin>
 # Record the environment before every measurement session
 bash env/dump_environment.sh
 
-# A-series microbenchmarks
-./build/default/harness_a $(git rev-parse HEAD) 0 <experiment>
+# A-series microbenchmarks. <experiment> is one of:
+#   a1   a2   a2b   a3b   a4   a4b
+# a1 runs both A1a (atomic-only, three orderings) and A1b (queue arms).
+./build/default/harness_a $(git rev-parse HEAD) 0 a1
 
 # B1 load sweep, both baseline configurations
 ./build/default/harness_b $(git rev-parse HEAD) 0 <out.bin> BTCUSDT book 3 8192
 ./build/default/harness_b $(git rev-parse HEAD) 0 <out.bin> BTCUSDT book 3 1000
 
-# Post-processing and graphs (needs matplotlib for the graphs)
-python3 tools/analyse_harness_b.py results/harness_b_spin8192_*.csv \
-                                   results/harness_b_spin1000_*.csv
+# Post-processing and graphs. The tables print with the standard library
+# alone; the graphs need matplotlib, which on a Homebrew Python needs a
+# virtual environment (PEP 668).
+python3 -m venv .venv && .venv/bin/pip install matplotlib
+.venv/bin/python tools/analyse_harness_b.py results/harness_b_spin8192_*.csv \
+                                            results/harness_b_spin1000_*.csv
 
 # Tail structure
 ./build/default/harness_b $(git rev-parse HEAD) 1 <out.bin> BTCUSDT book dump
@@ -552,6 +557,11 @@ Measurement runs require mains power and Low Power Mode off. The harness
 records its own git commit, dirty flag, UTC timestamp, capacity, spin
 count and QoS class into every results file, so each artifact is
 self-describing rather than paired with an environment dump by timestamp.
+
+Every invocation above has been run as written. The two dirty flags differ
+deliberately: measurement runs pass `0` and require a clean tree, while the
+tail dump passes `1` because it is a diagnostic rather than a reported
+result and is expected to run against modified source.
 
 ---
 
