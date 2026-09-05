@@ -283,6 +283,15 @@ concept HasWaitNonempty = requires(Q& q) {
 };
 
 
+// Only the baseline has a wait policy to instrument. The SPSC arm has no
+// condvar, so signals and parks are meaningless there rather than zero.
+template <typename Q>
+concept HasWaitDiagnostics = requires(const Q& q) {
+    { q.signals() } -> std::same_as<std::uint64_t>;
+    { q.parks() } -> std::same_as<std::uint64_t>;
+};
+
+
 template <typename Queue>
 void consume(
     Queue& queue,
@@ -382,6 +391,10 @@ struct Datapoint {
     std::uint64_t max_ns = 0;
 
     std::uint64_t book_updates = 0;
+
+    int spin_count = 0;
+    std::uint64_t signals = 0;
+    std::uint64_t parks = 0;
 
     bool drop_gate_passed = false;
     bool lag_gate_passed = false;
@@ -497,6 +510,12 @@ Datapoint run_datapoint(
     point.max_lag_ns = stats.max_lag_ns;
     point.book_updates = book.update_count;
 
+    if constexpr (HasWaitDiagnostics<Queue>) {
+        point.spin_count = Queue::spin_count();
+        point.signals = queue->signals();
+        point.parks = queue->parks();
+    }
+
     // §7.7a: under drop-newest with no retry every rejection is a drop,
     // so these must agree. They are separate counters owned by different
     // layers, and this is the one place their equality is checkable.
@@ -586,6 +605,7 @@ struct Options {
     std::string symbol;
     ConsumerMode consumer = ConsumerMode::Book;
     std::size_t passes = 3;
+    bool spin_sweep = false;
 };
 
 
@@ -596,7 +616,7 @@ bool parse_options(int argc, char* argv[], Options& out)
             << "Usage:\n"
             << "  " << argv[0]
             << " <git-commit-40-hex> <dirty:0|1> <capture.bin> <SYMBOL>"
-               " [consumer:book|timestamp] [passes]\n";
+               " [consumer:book|timestamp] [passes|spin-sweep]\n";
         return false;
     }
 
@@ -634,14 +654,22 @@ bool parse_options(int argc, char* argv[], Options& out)
     }
 
     if (argc == 7) {
-        const long passes = std::strtol(argv[6], nullptr, 10);
+        const std::string sixth = argv[6];
 
-        if (passes < 1 || passes > 20) {
-            std::cerr << "error: passes must be between 1 and 20\n";
-            return false;
+        if (sixth == "spin-sweep") {
+            out.spin_sweep = true;
+            out.passes = 1;
+        } else {
+            const long passes = std::strtol(argv[6], nullptr, 10);
+
+            if (passes < 1 || passes > 20) {
+                std::cerr
+                    << "error: passes must be 1-20, or \"spin-sweep\"\n";
+                return false;
+            }
+
+            out.passes = static_cast<std::size_t>(passes);
         }
-
-        out.passes = static_cast<std::size_t>(passes);
     }
 
     return true;
@@ -741,7 +769,66 @@ int main(int argc, char* argv[])
     using SpscArm = SpscRingBuffer<Record, kCapacity>;
     using MutexArm = MutexQueue<Record, kCapacity>;
 
-    for (std::size_t pass = 0; pass < options.passes; ++pass) {
+    // ---------------------------------------------------------------
+    // Spin-sweep diagnostic
+    // ---------------------------------------------------------------
+    //
+    // The first pilot showed the baseline arm failing §6.4's p99 lag gate
+    // at every rate at or above 500k, with lag roughly constant at 2.7-5.3
+    // us while the gate shrinks with the period. A roughly fixed cost on a
+    // small fraction of pushes is the shape of an occasional syscall, and
+    // the candidate is notify_one waking a parked consumer: that is a
+    // __ulock_wake on the producer's critical path, charged to the
+    // producer's own schedule.
+    //
+    // If that is the mechanism, raising the spin budget should reduce
+    // parks, reduce signals-that-block, and reduce producer lag together.
+    // If lag does not move while parks collapse, the cost is lock
+    // contention rather than wakeups and the baseline's ceiling is real.
+    //
+    // Either answer is worth having before spending three passes. The
+    // counters make this direct evidence rather than an inference from
+    // the lag distribution.
+    //
+    // Note this also bears on §4's spin derivation. measure_condvar_wakeup
+    // optimised the *waiter's* cost in isolation and omitted the cost
+    // blocking imposes on the *signaller*. If parking is expensive for the
+    // producer, the ski-rental balance point is higher than 1000 and the
+    // constant needs revising with that term included.
+    if (options.spin_sweep) {
+        constexpr double kDiagnosticRates[] = {
+            500'000.0,
+            1'000'000.0,
+            5'000'000.0
+        };
+
+        for (const double rate : kDiagnosticRates) {
+            std::cerr << "spin-sweep  rate " << rate << "  arm spsc\n";
+
+            results.push_back(run_datapoint<SpscArm>(
+                slice, rate, Arm::Spsc, options.consumer, 0, buffers
+            ));
+
+            std::cerr << "spin-sweep  rate " << rate << "  spin 1000\n";
+            results.push_back(run_datapoint<MutexQueue<Record, kCapacity, 1000>>(
+                slice, rate, Arm::Mutex, options.consumer, 0, buffers
+            ));
+
+            std::cerr << "spin-sweep  rate " << rate << "  spin 8192\n";
+            results.push_back(run_datapoint<MutexQueue<Record, kCapacity, 8192>>(
+                slice, rate, Arm::Mutex, options.consumer, 0, buffers
+            ));
+
+            std::cerr << "spin-sweep  rate " << rate << "  spin 65536\n";
+            results.push_back(run_datapoint<MutexQueue<Record, kCapacity, 65536>>(
+                slice, rate, Arm::Mutex, options.consumer, 0, buffers
+            ));
+        }
+    }
+
+    for (std::size_t pass = 0;
+         pass < (options.spin_sweep ? 0 : options.passes);
+         ++pass) {
         for (std::size_t r = 0; r < kRateCount; ++r) {
             // §5: alternate which arm runs first on each pass, so
             // thermal drift on a fanless M2 does not load onto whichever
@@ -772,7 +859,8 @@ int main(int argc, char* argv[])
     }
 
     const std::string path =
-        "results/harness_b_" + utc_timestamp() + ".csv";
+        (options.spin_sweep ? "results/spin_sweep_" : "results/harness_b_") +
+        utc_timestamp() + ".csv";
 
     std::ofstream out(path);
 
@@ -782,7 +870,8 @@ int main(int argc, char* argv[])
     }
 
     out
-        << "# experiment: b1\n"
+        << "# experiment: " << (options.spin_sweep ? "b1_spin_sweep" : "b1")
+        << '\n'
         << "# git_commit: " << options.git_commit << '\n'
         << "# git_dirty: " << (options.dirty ? "yes" : "no") << '\n'
         << "# utc: " << utc_timestamp() << '\n'
@@ -802,7 +891,14 @@ int main(int argc, char* argv[])
         << "# lap1_ms: " << lap1_ms << '\n'
         << "# lap2_ms: " << lap2_ms << '\n'
         << "# lap_ratio: " << lap_ratio
-        << "  (~1.2 is the floor, not a failure — §6.4a)\n"
+        << "  (see note below)\n"
+        << "#\n"
+        << "# §6.4a records a lap1/lap2 floor of ~1.2, but that came from\n"
+        << "# traversing all 13.7M records. A 2M-record slice is ~112 MB,\n"
+        << "# far beyond the 16 MB L2, so both laps stream from DRAM and\n"
+        << "# there is no first-pass cache benefit to recover. A ratio at\n"
+        << "# 1.0 here means no residual paging, which is what warming\n"
+        << "# was for. It is not a failed check against the 1.2 floor.\n"
         << "# spin_count: " << "1000 (derived, §4)\n"
         << "#\n"
         << "# Latency is intended-send to consumer-dequeue. A datapoint is\n"
@@ -812,7 +908,7 @@ int main(int argc, char* argv[])
 
     out
         << "pass,arm,rate_hz,pushed,delivered,dropped_records,"
-           "full_rejections,book_updates,"
+           "full_rejections,book_updates,spin_count,signals,parks,"
            "p50_lag_ns,p99_lag_ns,max_lag_ns,"
            "p50_ns,p90_ns,p99_ns,p999_ns,p9999_ns,max_ns,"
            "drop_gate,lag_gate,valid\n";
@@ -827,6 +923,9 @@ int main(int argc, char* argv[])
             << point.dropped_records << ','
             << point.full_rejections << ','
             << point.book_updates << ','
+            << point.spin_count << ','
+            << point.signals << ','
+            << point.parks << ','
             << point.p50_lag_ns << ','
             << point.p99_lag_ns << ','
             << point.max_lag_ns << ','

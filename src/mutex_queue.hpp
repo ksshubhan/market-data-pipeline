@@ -9,7 +9,12 @@
 #include <type_traits>
 
 
-template <typename T, std::size_t Capacity>
+// SpinCount is a template parameter so the constant can be swept as a
+// diagnostic without editing the header between runs. The default is the
+// derived 1000 documented at kSpinCount below; harness_b's spin-sweep
+// mode instantiates other values to test whether producer lag in the
+// baseline arm is caused by wake syscalls.
+template <typename T, std::size_t Capacity, int SpinCount = 1000>
 class MutexQueue {
     static_assert(Capacity > 0);
     static_assert(
@@ -38,6 +43,14 @@ public:
         }
 
         const bool was_empty = (size == 0);
+
+        if (was_empty) {
+            // Counted under the lock, so this adds no sharing the mutex
+            // does not already impose. Read after join, which supplies
+            // the happens-before edge, so a plain uint64_t is correct
+            // here for the same reason §6.5b gives for full_rejections.
+            ++signals_;
+        }
 
         buffer_[tail & kMask] = value;
         tail_.store(tail + 1, std::memory_order_relaxed);
@@ -103,6 +116,18 @@ public:
 
         std::unique_lock<std::mutex> lock(mutex_);
 
+        // Distinguishes "reached the condvar" from "actually blocked":
+        // if the predicate already holds, wait() returns without
+        // parking and no wake syscall is needed. Only the latter costs
+        // the producer a __ulock_wake, so only the latter is counted.
+        const bool would_block =
+            size_hint() == 0 &&
+            !closed_.load(std::memory_order_relaxed);
+
+        if (would_block) {
+            ++parks_;
+        }
+
         not_empty_.wait(lock, [this] {
             return size_hint() != 0 ||
                    closed_.load(std::memory_order_relaxed);
@@ -126,6 +151,31 @@ public:
     {
         std::lock_guard<std::mutex> lock(mutex_);
         return full_rejections_;
+    }
+
+
+    // Number of empty -> non-empty transitions, i.e. the number of
+    // notify_one calls the producer made. Each one where a consumer was
+    // actually parked costs the producer a wake syscall on the critical
+    // path of its own send schedule.
+    std::uint64_t signals() const
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return signals_;
+    }
+
+
+    // Number of times the consumer exhausted its spin budget and blocked.
+    std::uint64_t parks() const
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return parks_;
+    }
+
+
+    static constexpr int spin_count() noexcept
+    {
+        return SpinCount;
     }
 
 
@@ -187,7 +237,7 @@ private:
     // cost — roughly B/5, the bad end of that curve. It paid a 1.3 us
     // park and wake to avoid about 1 us of spinning, on every empty
     // queue. "Did the tuning matter" has a number behind it now.
-    static constexpr int kSpinCount = 1000;
+    static constexpr int kSpinCount = SpinCount;
 
     // Racy reads used only to decide whether to take the lock. See
     // wait_nonempty().
@@ -233,4 +283,10 @@ private:
 
     mutable std::mutex mutex_;
     std::condition_variable not_empty_;
+
+    // Diagnostics for §4's spin tuning. Producer-written and
+    // consumer-written respectively, both only under the mutex, both
+    // read only after join.
+    std::uint64_t signals_ = 0;
+    std::uint64_t parks_ = 0;
 };
