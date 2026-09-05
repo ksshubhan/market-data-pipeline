@@ -21,6 +21,7 @@
 #include "record.hpp"
 #include "replay_producer.hpp"
 #include "replay_schedule.hpp"
+#include "test_child_process.hpp"
 
 #include <sys/wait.h>
 #include <unistd.h>
@@ -625,77 +626,10 @@ void test_paced_run_lag_statistics()
 }
 
 
-// The preconditions abort, so they cannot be checked in-process directly.
-// They are checked in a forked child instead.
-//
-// The first attempt registered three separate ctest entries with
-// WILL_FAIL. That does not work and the reason is worth keeping: WILL_FAIL
-// inverts a non-zero *exit code*, but a process killed by a signal is
-// classified by ctest as "Subprocess aborted" — an exception, and
-// exceptions fail regardless of the property. std::abort raises SIGABRT,
-// so it lands in the one category WILL_FAIL cannot reach.
-//
-// Forking is better than a property anyway. The parent captures the
-// child's stderr and matches the diagnostic, so this verifies *which*
-// precondition fired rather than merely that the process died — a check
-// that any abort satisfies would pass if the three guards were swapped.
-struct ChildOutcome {
-    bool aborted = false;
-    std::string diagnostic;
-};
-
-
-ChildOutcome run_in_child(void (*body)())
-{
-    ChildOutcome outcome;
-
-    int pipe_fds[2];
-
-    if (pipe(pipe_fds) != 0) {
-        std::cerr << "pipe() failed\n";
-        return outcome;
-    }
-
-    const pid_t pid = fork();
-
-    if (pid < 0) {
-        std::cerr << "fork() failed\n";
-        close(pipe_fds[0]);
-        close(pipe_fds[1]);
-        return outcome;
-    }
-
-    if (pid == 0) {
-        close(pipe_fds[0]);
-        dup2(pipe_fds[1], STDERR_FILENO);
-        close(pipe_fds[1]);
-
-        body();
-
-        // Only reached if the precondition failed to fire.
-        _exit(0);
-    }
-
-    close(pipe_fds[1]);
-
-    char buffer[512];
-    ssize_t n = 0;
-
-    while ((n = read(pipe_fds[0], buffer, sizeof(buffer))) > 0) {
-        outcome.diagnostic.append(buffer, static_cast<std::size_t>(n));
-    }
-
-    close(pipe_fds[0]);
-
-    int status = 0;
-    waitpid(pid, &status, 0);
-
-    outcome.aborted =
-        WIFSIGNALED(status) && WTERMSIG(status) == SIGABRT;
-
-    return outcome;
-}
-
+// The preconditions abort, so they cannot be checked in-process
+// directly. run_in_child does the forking; the rationale for forking
+// rather than using ctest's WILL_FAIL lives with it in
+// test_child_process.hpp.
 
 void expect_abort(
     const char* what,

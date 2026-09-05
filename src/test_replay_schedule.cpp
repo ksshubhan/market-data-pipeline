@@ -1,8 +1,10 @@
 #include "replay_schedule.hpp"
+#include "test_child_process.hpp"
 
 #include <cstdint>
 #include <iostream>
 #include <limits>
+#include <string>
 #include <vector>
 
 
@@ -294,11 +296,140 @@ void test_degenerate_inputs()
     check(name, zero_count.intended_offset_ns.empty(),
         "zero count produced offsets");
 
-    const ReplaySchedule bad_rate = build_fixed_rate_schedule(10, 0.0);
+    // A zero count is legal and must stay legal. It used to share a
+    // condition with the rate check, and separating them is half of what
+    // the precondition work below is for.
+    check_u64(name, "zero count span", zero_count.span_ns, 0);
 
-    check_u64(name, "bad rate size",
-        bad_rate.intended_offset_ns.size(), 10);
-    check_u64(name, "bad rate span", bad_rate.span_ns, 0);
+    // Compression of exactly 1.0 is the documented no-op and must not be
+    // caught by the positive-and-finite guard.
+    const std::vector<CaptureRecord> pair = from_timestamps({1000, 4000});
+    const ReplaySchedule unit = build_replay_schedule(pair, 1.0);
+
+    check_u64(name, "unit compression gap",
+        unit.intended_offset_ns[1], 3000);
+}
+
+
+// The preconditions abort, so each body runs in a forked child and the
+// parent matches the diagnostic. Matching the text rather than merely
+// observing a death is what makes this verify *which* guard fired: a
+// check satisfied by any abort would pass with the two guards swapped.
+void expect_abort(
+    const char* what,
+    void (*body)(),
+    const char* expected_substring
+)
+{
+    const ChildOutcome outcome = run_in_child(body);
+
+    const bool ok =
+        outcome.aborted &&
+        outcome.diagnostic.find(expected_substring) != std::string::npos;
+
+    check("schedule/preconditions", ok, what);
+
+    if (!ok) {
+        std::cerr << "  expected substring: " << expected_substring << "\n";
+        std::cerr << "  child aborted: " << (outcome.aborted ? "yes" : "no")
+                  << "\n";
+        std::cerr << "  child stderr: " << outcome.diagnostic << "\n";
+    }
+}
+
+
+void body_zero_rate()
+{
+    build_fixed_rate_schedule(10, 0.0);
+}
+
+
+void body_negative_rate()
+{
+    build_fixed_rate_schedule(10, -1000.0);
+}
+
+
+// Infinity divides a period to zero, producing the same all-at-t0
+// schedule a zero rate does. `rate_hz > 0.0` alone would let it through.
+void body_infinite_rate()
+{
+    build_fixed_rate_schedule(
+        10,
+        std::numeric_limits<double>::infinity()
+    );
+}
+
+
+// Every comparison against NaN is false, so a guard written as
+// `rate_hz <= 0.0` would pass NaN straight into llround.
+void body_nan_rate()
+{
+    build_fixed_rate_schedule(
+        10,
+        std::numeric_limits<double>::quiet_NaN()
+    );
+}
+
+
+void body_zero_compression()
+{
+    const std::vector<CaptureRecord> records =
+        from_timestamps({1000, 2000, 3000});
+
+    build_replay_schedule(records, 0.0);
+}
+
+
+void body_negative_compression()
+{
+    const std::vector<CaptureRecord> records =
+        from_timestamps({1000, 2000, 3000});
+
+    build_replay_schedule(records, -38791.0);
+}
+
+
+void body_nan_compression()
+{
+    const std::vector<CaptureRecord> records =
+        from_timestamps({1000, 2000, 3000});
+
+    build_replay_schedule(
+        records,
+        std::numeric_limits<double>::quiet_NaN()
+    );
+}
+
+
+// The argument is wrong whether or not there is work to do, so the guard
+// fires ahead of the empty-slice early return rather than behind it.
+void body_bad_compression_empty_slice()
+{
+    const std::vector<CaptureRecord> empty;
+
+    build_replay_schedule(empty, 0.0);
+}
+
+
+void test_preconditions_abort()
+{
+    expect_abort("zero rate", body_zero_rate, "rate_hz must be positive");
+    expect_abort("negative rate", body_negative_rate,
+        "rate_hz must be positive");
+    expect_abort("infinite rate", body_infinite_rate,
+        "rate_hz must be positive");
+    expect_abort("NaN rate", body_nan_rate, "rate_hz must be positive");
+
+    expect_abort("zero compression", body_zero_compression,
+        "compression must be positive");
+    expect_abort("negative compression", body_negative_compression,
+        "compression must be positive");
+    expect_abort("NaN compression", body_nan_compression,
+        "compression must be positive");
+    expect_abort("bad compression on an empty slice",
+        body_bad_compression_empty_slice,
+        "compression must be positive");
 }
 
 } // namespace
@@ -313,6 +444,7 @@ int main()
     test_compression_scales_and_preserves_order();
     test_fixed_rate_has_no_drift();
     test_degenerate_inputs();
+    test_preconditions_abort();
 
     if (g_failures != 0) {
         std::cerr

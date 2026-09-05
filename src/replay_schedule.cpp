@@ -1,6 +1,60 @@
 #include "replay_schedule.hpp"
 
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
+
+
+namespace {
+
+// Same mechanism as replay_producer.hpp's preconditions, and
+// deliberately the same shape so the two read alike.
+//
+// assert() is not available: every configured build defines NDEBUG, and
+// §8.0b records what that cost the first time — an entire test file
+// compiling to nothing and exiting 0 for three days. Anything that must
+// hold at -O2 aborts on its own terms.
+//
+// A status flag on ReplaySchedule was considered and rejected for the
+// reason the producer already gives: a flag is only loud if every caller
+// reads it, which is the exact property that failed for assert.
+//
+// Aborting from a function that is otherwise pure arithmetic — no clock,
+// no I/O, no threads — is a real cost and worth naming rather than
+// glossing. It is paid because there is nothing to recover to. A
+// non-positive rate or compression factor is a typo in a harness driver,
+// not a runtime condition a sweep could legitimately meet and skip, and
+// what was returned in its place was not obviously broken: it is a
+// schedule the caller runs and then labels with the rate it asked for
+// rather than the one it got.
+[[noreturn]] void fail(const char* message, double value) noexcept
+{
+    std::fprintf(
+        stderr,
+        "replay_schedule: precondition failed: %s (got %g)\n",
+        message,
+        value
+    );
+
+    std::fflush(stderr);
+    std::abort();
+}
+
+
+// The property that must hold, written so that its negation catches NaN
+// and both infinities as well as zero and negatives.
+//
+// Testing `x <= 0.0` would let NaN through, because every comparison
+// against NaN is false. Testing `x > 0.0` alone would let +infinity
+// through, and an infinite divisor collapses every gap to zero — the
+// same all-at-t0 schedule a zero rate produces, reached from the other
+// direction.
+bool is_positive_finite(double value) noexcept
+{
+    return std::isfinite(value) && value > 0.0;
+}
+
+} // namespace
 
 
 ReplaySchedule build_replay_schedule(
@@ -8,16 +62,19 @@ ReplaySchedule build_replay_schedule(
     double compression
 )
 {
+    // Checked before anything else, including the empty-slice case. The
+    // precondition is a statement about the call, not about whether the
+    // call happened to have any work to do.
+    if (!is_positive_finite(compression)) {
+        fail("compression must be positive and finite", compression);
+    }
+
     ReplaySchedule schedule;
 
     schedule.intended_offset_ns.resize(slice.size());
 
     if (slice.empty()) {
         return schedule;
-    }
-
-    if (!(compression > 0.0)) {
-        compression = 1.0;
     }
 
     schedule.intended_offset_ns[0] = 0;
@@ -65,11 +122,19 @@ ReplaySchedule build_fixed_rate_schedule(
     double rate_hz
 )
 {
+    if (!is_positive_finite(rate_hz)) {
+        fail("rate_hz must be positive and finite", rate_hz);
+    }
+
     ReplaySchedule schedule;
 
     schedule.intended_offset_ns.resize(count);
 
-    if (count == 0 || !(rate_hz > 0.0)) {
+    // count == 0 is legal and unambiguous — no records, no offsets — and
+    // it is checked separately from the rate on purpose. The previous
+    // form welded the two into one condition, so a caller error and a
+    // legal degenerate case returned the same object.
+    if (count == 0) {
         return schedule;
     }
 

@@ -73,9 +73,17 @@ struct ReplaySchedule {
 // time, not to assume.
 //
 // `compression` divides every gap (§6.5 B2's time-compression mechanism).
-// 1.0 replays at captured pace. The factor for B2 is still open pending
-// the ETHW analysis; the parameter exists now so B2 does not need a
-// second schedule builder.
+// 1.0 replays at captured pace. B2's factor is 38,791.
+//
+// **Precondition: `compression` must be positive and finite.** A value
+// that is not — zero, negative, NaN, or infinite — aborts. It previously
+// fell back to 1.0 silently, which meant a caller asking for a
+// four-order-of-magnitude compression and getting captured pace instead,
+// with nothing in the returned object to say so. The reasoning for
+// aborting rather than returning a status is in the .cpp, and it is the
+// same reasoning run_replay's three preconditions already use.
+//
+// An empty slice is not an error and returns an empty schedule.
 ReplaySchedule build_replay_schedule(
     std::span<const CaptureRecord> slice,
     double compression = 1.0
@@ -88,6 +96,18 @@ ReplaySchedule build_replay_schedule(
 //
 // offset[i] is computed from i rather than accumulated, so rounding error
 // cannot drift across two million records.
+//
+// **Precondition: `rate_hz` must be positive and finite.** A value that
+// is not aborts. The previous fallback was the worse of the two this
+// file used to have: it resized the offset vector *before* testing the
+// rate, so it returned `count` offsets all equal to zero — not an empty
+// schedule but a structurally valid instruction to send every record at
+// t0. A driver that stamps its requested rate into a results file
+// alongside that run publishes an offered rate the run never delivered,
+// which is the failure §6.4's coordinated-omission machinery exists to
+// prevent.
+//
+// `count == 0` is not an error and returns an empty schedule.
 ReplaySchedule build_fixed_rate_schedule(
     std::size_t count,
     double rate_hz
