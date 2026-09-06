@@ -42,6 +42,16 @@ add_executable(test_replay_producer
     src/replay_schedule.cpp
 )
 
+add_executable(test_convert_capture
+    src/test_convert_capture.cpp
+)
+
+target_compile_definitions(test_convert_capture PRIVATE
+    CONVERT_CAPTURE_BINARY="$<TARGET_FILE:convert_capture>"
+)
+
+add_dependencies(test_convert_capture convert_capture)
+
 add_executable(measure_condvar_wakeup
     src/measure_condvar_wakeup.cpp
 )
@@ -110,3 +120,4 @@ add_test(NAME spsc_ring_buffer COMMAND test_spsc_ring_buffer)
 add_test(NAME capture_file COMMAND test_capture_file)
 add_test(NAME replay_schedule COMMAND test_replay_schedule)
 add_test(NAME replay_producer COMMAND test_replay_producer)
+add_test(NAME convert_capture COMMAND test_convert_capture)
