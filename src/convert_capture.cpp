@@ -6,6 +6,7 @@
 #include <charconv>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -16,6 +17,7 @@
 #include <system_error>
 
 #include <fcntl.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 
@@ -176,6 +178,173 @@ void remove_temp_file(
 {
     std::error_code error;
     std::filesystem::remove(temp_path, error);
+}
+
+
+struct CommandOutput {
+    // popen and pclose both succeeded, so exit_status means something.
+    bool ran = false;
+
+    int exit_status = -1;
+    std::string output;
+};
+
+
+// Run a fixed command and collect its standard output.
+//
+// popen goes through /bin/sh, which would be a problem if any of this
+// came from the caller. None of it does: every command run through here
+// is a string literal in this file, with no argument interpolation, so
+// there is nothing for a crafted input path or symbol to escape into.
+// Standard error is discarded by the command strings themselves rather
+// than inherited, so a git failure produces a diagnostic from this file
+// instead of a bare git error with no context.
+CommandOutput run_command(const char* command)
+{
+    CommandOutput result;
+
+    std::FILE* pipe = ::popen(command, "r");
+
+    if (pipe == nullptr) {
+        return result;
+    }
+
+    char buffer[4096];
+
+    while (std::fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+        result.output += buffer;
+    }
+
+    const int status = ::pclose(pipe);
+
+    if (status == -1 || !WIFEXITED(status)) {
+        return result;
+    }
+
+    result.ran = true;
+    result.exit_status = WEXITSTATUS(status);
+
+    return result;
+}
+
+
+// Verify that the git state the caller claims in the header is the git
+// state this process can actually observe.
+//
+// The converter has taken a commit SHA and a dirty flag as arguments
+// since rev 4 and has written both into the header without checking
+// either. Every invocation in this project's history passed dirty = 0,
+// including runs against a modified tree, so the field recording whether
+// a dataset came from a clean build has been recording only what the
+// caller asserted. A flag that merely refused when the caller admitted
+// to being dirty would check the one case that was never the problem.
+//
+// The objection to this is that a file-format converter should not know
+// about git. The answer is that it has taken a git SHA as an argument
+// since it was designed, so that boundary was crossed then; verifying a
+// field it already writes is a smaller step than continuing to record
+// that field unverified.
+//
+// git runs in the working directory, which is the caller's choice and
+// the only defensible one — the input log and the output binary can each
+// live anywhere, so neither identifies a repository. Running with
+// --require-clean from outside a repository is an error rather than a
+// silent pass.
+//
+// Untracked files count as unclean. A new source file that has not been
+// added is still a file the build can have compiled, and "clean" that
+// tolerates it is not a claim worth recording in a header.
+bool verify_clean_tree(const std::string& expected_commit)
+{
+    const CommandOutput head =
+        run_command("git rev-parse HEAD 2>/dev/null");
+
+    if (!head.ran) {
+        std::cerr
+            << "error: --require-clean was given but git could not be"
+            << " run at all\n";
+        return false;
+    }
+
+    if (head.exit_status != 0) {
+        std::cerr
+            << "error: --require-clean was given but HEAD could not be"
+            << " resolved\n"
+            << "  git rev-parse HEAD exited "
+            << head.exit_status
+            << "; the working directory is probably not inside a"
+            << " repository\n";
+        return false;
+    }
+
+    std::string observed_commit = head.output;
+
+    while (!observed_commit.empty() &&
+           (observed_commit.back() == '\n' ||
+            observed_commit.back() == '\r' ||
+            observed_commit.back() == ' ')) {
+        observed_commit.pop_back();
+    }
+
+    if (observed_commit != expected_commit) {
+        std::cerr
+            << "error: --require-clean was given but the commit argument"
+            << " is not HEAD\n"
+            << "  argument: " << expected_commit << '\n'
+            << "  HEAD:     " << observed_commit << '\n';
+        return false;
+    }
+
+    const CommandOutput status =
+        run_command("git status --porcelain 2>/dev/null");
+
+    if (!status.ran || status.exit_status != 0) {
+        std::cerr
+            << "error: --require-clean was given but the working tree"
+            << " state could not be determined\n";
+        return false;
+    }
+
+    if (!status.output.empty()) {
+        std::cerr
+            << "error: --require-clean was given but the working tree is"
+            << " not clean\n";
+
+        std::size_t shown = 0;
+        std::size_t line_start = 0;
+
+        while (line_start < status.output.size() && shown < 10) {
+            const std::size_t line_end =
+                status.output.find('\n', line_start);
+
+            const std::size_t count =
+                (line_end == std::string::npos)
+                    ? status.output.size() - line_start
+                    : line_end - line_start;
+
+            std::cerr
+                << "  "
+                << status.output.substr(line_start, count)
+                << '\n';
+
+            ++shown;
+
+            if (line_end == std::string::npos) {
+                break;
+            }
+
+            line_start = line_end + 1;
+        }
+
+        std::cerr
+            << "  untracked files count as unclean; commit or stash"
+            << " before producing a dataset that backs a measured"
+            << " number\n";
+
+        return false;
+    }
+
+    return true;
 }
 
 
@@ -485,12 +654,22 @@ SyncOutcome sync_descriptor(int fd) noexcept
 
 int main(int argc, char* argv[])
 {
-    if (argc != 6) {
+    bool require_clean = false;
+
+    if (argc == 7) {
+        if (std::string_view(argv[6]) == "--require-clean") {
+            require_clean = true;
+        } else {
+            std::cerr
+                << "error: unrecognised argument: " << argv[6] << '\n';
+            return 1;
+        }
+    } else if (argc != 6) {
         std::cerr
             << "Usage:\n"
             << "  " << argv[0]
             << " <input.log> <output.bin> <symbol>"
-            << " <git-commit-40-hex> <dirty:0|1>\n";
+            << " <git-commit-40-hex> <dirty:0|1> [--require-clean]\n";
 
         return 1;
     }
@@ -517,6 +696,23 @@ int main(int argc, char* argv[])
         std::cerr
             << "error: dirty flag must be either 0 or 1\n";
         return 1;
+    }
+
+    // Both halves of the check, in the order that reports the more
+    // specific fault first. A caller that admits to a dirty tree and
+    // then asks for a clean one has contradicted itself, and saying so
+    // is more use than the git diagnostic that would otherwise follow.
+    if (require_clean) {
+        if (dirty) {
+            std::cerr
+                << "error: --require-clean was given but the dirty flag"
+                << " argument is 1\n";
+            return 1;
+        }
+
+        if (!verify_clean_tree(git_commit_hex)) {
+            return 1;
+        }
     }
 
     BinaryHeader header{};
@@ -1274,6 +1470,9 @@ int main(int argc, char* argv[])
         << "  records: " << record_count << '\n'
         << "  bytes:   " << expected_file_size << '\n'
         << "  header:  read back and verified against 64 bytes\n"
+        << (require_clean
+                ? "  tree:    verified clean at HEAD before conversion\n"
+                : "")
         << "  durable: contents via "
         << barrier_name(contents_barrier)
         << ", directory via "
