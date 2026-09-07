@@ -557,12 +557,21 @@ the payload. The report is committed at `evidence/c1_tsan_report.txt`.
 A "TSan clean" claim with no verified negative control says only that the
 tool was quiet.
 
-**ThreadSanitizer clean on the valid arms**, on two toolchains (Homebrew
-clang and AppleClang). Both are LLVM/libc++ lineage, so this is stated as
-"two LLVM toolchains" rather than as independent confirmation. GCC's
-ThreadSanitizer on ARM64 Linux would be the genuinely independent
-implementation, and it remains open: no GCC TSan run has been made
-against any suite, so every clean verdict here is LLVM's.
+**ThreadSanitizer clean on the valid arms**, on three toolchains across
+two independent implementations. Homebrew clang and AppleClang are one
+lineage, LLVM/libc++. GCC 15.2.0 with libstdc++ 15, on ARM64 Linux, is a
+separately written detector on a different operating system and a
+different standard library. All seven suites pass under both.
+
+**The independent run is worth more than a third green tick, because the
+control agrees too.** GCC's ThreadSanitizer flags C1 at
+`spsc_ring_buffer.hpp:130` in `try_pop` against `:100` in `try_push` —
+the same two non-atomic payload accesses LLVM named, not the index. Two
+detectors with no shared code identify the same race at the same two
+lines, and independently find nothing in the valid arms. The workload was
+verified identical rather than assumed: `kCount` is a hardcoded
+`1'000'000`, so the faster Linux wall times are speed, not a smaller
+test. Committed at `evidence/tsan_gcc15_aarch64.txt`.
 
 **The C1 broken-ordering arm is expected to be flagged**, and that report
 is the evidence rather than a failure of the criterion. C1 removes the
@@ -753,21 +762,36 @@ is only meaningful where one arm crosses it and the other does not. At
 the comparison inverts — that is an artifact of the fixed threshold, not
 a reversal.
 
-**Two toolchains, one lineage — for ThreadSanitizer.** Homebrew clang and
-AppleClang are both LLVM/libc++, so the clean TSan verdict rests entirely
-on one implementation. GCC's ThreadSanitizer on ARM64 Linux is the
-outstanding independent check and has not been run.
+**ThreadSanitizer now has two independent implementations, not three
+toolchains of one.** Homebrew clang and AppleClang are a single
+LLVM/libc++ lineage; GCC 15 on ARM64 Linux is separately written. Both
+report clean on the valid arms and both flag C1 at the same two lines.
+The remaining limitation is narrower: all three run on ARM64, so nothing
+here is a cross-architecture check.
 
-**The interference constants are no longer outstanding.** libstdc++ 15.2.0
-on aarch64 reports 256 destructive and 64 constructive — identical to both
-libc++ builds. Four readings, two independent library lineages, four
-versions, all 256/64, against a coherence granule measured at 64 bytes on
-this machine (A2b). The agreement is the stronger result: 256 is the
-architecture-wide convention rather than one vendor's choice, and it
-overshoots this implementation by 4x. Neither library knows anything about
-this chip — GCC 15 has no apple-m1 among its -mcpu values — so the constant
-is policy keyed on the target triple, not a hardware reading. Measured in
-an Ubuntu 25.10 aarch64 guest under UTM;
+**The interference constants are closed, and the 256 is a default rather
+than a judgement.** libstdc++ 15.2.0 on aarch64 reports 256 destructive
+and 64 constructive in a default build — matching both libc++ builds. But
+the number moves with `-mcpu`: `generic` and `apple-m1` give 256, while
+`neoverse-n1`, `neoverse-v1`, `neoverse-v2`, `cortex-a76` and `cortex-x3`
+all give **64**, confirmed through `<new>` and not only the macro.
+
+GCC 15's source explains it. `aarch64-cores.def` recognises `apple-m1` —
+real MIDR values, `V8_5A` — but wires all Apple parts to the
+`generic_armv8_a` tuning model, and the constant is emitted from the
+tuning model's prefetch table gated on `l1_cache_line_size >= 0`.
+`generic_prefetch_tune` leaves that field at `-1`;
+`generic_armv9a_prefetch_tune`, used by the Neoverse N1 tuning, sets 64.
+**So 256 is what GCC emits when the tuning model declines to state a line
+size**, and `-mcpu=apple-m1` looks like asking GCC about this chip while
+actually being routed to the table with the field unset.
+
+The result is therefore not that the libraries are wrong by 4x. It is that
+**one direct measurement and one compiler independently say 64** — A2b on
+this M2, and GCC for every aarch64 part it models — while 256 is the price
+of not telling the toolchain what it is building for. libc++ has no tuning
+notion at all and reports 256 flat, so it cannot participate in the
+distinction. Measured in an Ubuntu 25.10 aarch64 guest under UTM;
 `evidence/interference_libstdcxx_gcc15_aarch64.txt`, probe at
 `tools/interference_probe.cpp`.
 
