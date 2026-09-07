@@ -9,9 +9,12 @@ offered load, on macOS/ARM64.
 
 C++20, ~8,500 lines of source excluding blanks and comments and ~12,800
 including them, across 34 files in `src/`. Every measurement in this
-README is reproducible from this repository with the commands in
-[How to reproduce](#how-to-reproduce), and every figure quoted here is
-recomputed from a committed artifact rather than transcribed.
+README has its command in [How to reproduce](#how-to-reproduce) and names
+the artifact it comes from. Most figures here have been recomputed from
+those artifacts rather than read back; the two exceptions are named where
+they appear — B3's parse-cost table and the harness C stress record only
+their reduced result, so they can be checked against the file but not
+re-derived from it.
 
 ---
 
@@ -713,17 +716,20 @@ ctest --test-dir build/default --output-on-failure
 # Inspect the raw capture before trusting it: precision and quantity
 # maxima, message counts, leading zeros, E monotonicity, and
 # capture-clock monotonicity, in one pass
-python3 tools/inspect_capture.py <capture.log>
+python3 tools/inspect_capture.py CAPTURE.log
 
-# Convert a capture to the binary dataset, then validate it exhaustively
-./build/default/convert_capture <capture.log> <out.bin> BTCUSDT \
-    $(git rev-parse HEAD) 0
-python3 tools/validate_capture.py <capture.log> <out.bin>
+# Convert a capture to the binary dataset, then validate it exhaustively.
+# --require-clean makes the converter verify HEAD and the working tree
+# through git rather than trusting the flag typed on the line before it.
+# It is the only guard of its kind in the project; use it.
+./build/default/convert_capture CAPTURE.log DATASET.bin BTCUSDT \
+    $(git rev-parse HEAD) 0 --require-clean
+python3 tools/validate_capture.py CAPTURE.log DATASET.bin
 
 # Record the environment before every measurement session
 bash env/dump_environment.sh
 
-# A-series microbenchmarks. <experiment> is one of:
+# A-series microbenchmarks. EXPERIMENT is one of:
 #   a1   a2   a2b   a3b   a4   a4b
 # a1 runs both A1a (atomic-only, three orderings) and A1b (queue arms).
 # harness_a writes to stdout and creates no file, so redirect it. The
@@ -732,18 +738,25 @@ bash env/dump_environment.sh
 ./build/default/harness_a $(git rev-parse HEAD) 0 a1 > /tmp/a1.txt
 
 # B1 load sweep, both baseline configurations
-./build/default/harness_b $(git rev-parse HEAD) 0 <out.bin> BTCUSDT book 3 8192
-./build/default/harness_b $(git rev-parse HEAD) 0 <out.bin> BTCUSDT book 3 1000
+./build/default/harness_b $(git rev-parse HEAD) 0 DATASET.bin BTCUSDT book 3 8192
+./build/default/harness_b $(git rev-parse HEAD) 0 DATASET.bin BTCUSDT book 3 1000
 
 # The spin sweep behind the choice of 8192. Three candidates an order of
 # magnitude apart, not a scan. It takes no seventh argument: the sweep
 # sets the spin itself.
-./build/default/harness_b $(git rev-parse HEAD) 0 <out.bin> BTCUSDT book spin-sweep
+./build/default/harness_b $(git rev-parse HEAD) 0 DATASET.bin BTCUSDT book spin-sweep
 
 # Post-processing and graphs. The tables print with the standard library
 # alone; the graphs need matplotlib, which on a Homebrew Python needs a
 # virtual environment (PEP 668). Python dependencies for tools/ are in
 # requirements.txt.
+#
+# Two tools overwrite committed artifacts in place and warn about
+# nothing: this one rewrites results/b1_latency_vs_load.png and
+# results/b1_percentile_distribution.png, and src/calibrate.cpp rewrites
+# results/timer_calibration.csv. A clean clone is dirty afterwards, and
+# the harness commands below take their dirty flag from argv. Check
+# git status before measuring, or run these last.
 python3 -m venv .venv && .venv/bin/pip install matplotlib
 .venv/bin/python tools/analyse_harness_b.py results/harness_b_spin8192_*.csv \
                                             results/harness_b_spin1000_*.csv
@@ -751,8 +764,35 @@ python3 -m venv .venv && .venv/bin/pip install matplotlib
 # Tail structure. The dump is ~48 MB per run and results/tail_samples_*.csv
 # is gitignored, so the second command needs the first to have been run in
 # this clone. Its output, results/tail_stalls_*.txt, is committed.
-./build/default/harness_b $(git rev-parse HEAD) 1 <out.bin> BTCUSDT book dump
+./build/default/harness_b $(git rev-parse HEAD) 1 DATASET.bin BTCUSDT book dump
 python3 tools/analyse_tail_samples.py results/tail_samples_*.csv
+
+# B3 parse cost. Writes to stdout; the committed artifact is
+# results/parse_cost_20260905_140732.txt. It records the reduced median
+# over 20 rounds, not the per-round samples, so the figures can be read
+# back from it but not recomputed.
+./build/default/measure_parse_cost $(git rev-parse HEAD) 0 CAPTURE.log \
+    BTCUSDT > /tmp/parse_cost.txt
+
+# The ski-rental inputs behind the spin count. Writes to stdout; five
+# runs are committed as results/condvar_wakeup_*.txt. The README quotes
+# the 20260904_161029 run: park/wake 1296.45 ns over a contended spin
+# iteration of 1.29147 ns gives 1003.86, rounded to 1000. The derived
+# constant ranges 985 to 1323 across the five, which is why the spin
+# sweep above settles it and this does not.
+./build/default/measure_condvar_wakeup $(git rev-parse HEAD) 0 \
+    > /tmp/condvar.txt
+
+# Timer calibration behind the ~19.9 ns sampling window and the two
+# outlier populations. Takes no arguments and writes
+# results/timer_calibration.csv, overwriting the committed one.
+./build/default/calibrate
+python3 scripts/plot_calibration.py
+
+# Harness C correctness stress. The 2,000,000,000-message run quoted
+# above needs the argument; the default is 100,000,000. Writes to
+# stdout; the committed artifacts are results/harness_c_*.txt.
+./build/default/harness_c 2000000000 > /tmp/harness_c.txt
 ```
 
 Measurement runs require mains power and Low Power Mode off. `harness_b`
@@ -764,6 +804,17 @@ binaries are less complete than either: `measure_parse_cost` and
 in the file, and `results/a1_memory_order_20260830_232947.txt` predates
 the header entirely, carrying a shuffle seed and nothing else. The 4
 September A1 re-run supersedes that one.
+
+**Two superseded artifacts are still committed and are not labelled in
+their own filenames.** `results/a4_index_caching_20260904_134223.txt` is
+the consumer-bound A4 configuration, in which the cached index measures
+*slower* — 0.844×. A4b replaced it with a producer-bound arm and is the
+row quoted above; A4's result is not a contradiction, it is the reason
+A4b exists. `results/c1_tsan_20260831.txt` names the C1 race at
+`spsc_ring_buffer.hpp:93` against `:72`, the line numbers before the file
+grew; the current report is `evidence/c1_tsan_report.txt` at `:130`
+against `:100`. Both are kept because deleting a measurement to make the
+repository tidier is the wrong instinct.
 
 **The commit and dirty flag are not.** Both harnesses take them from
 `argv` and neither consults git; only `convert_capture` verifies tree
