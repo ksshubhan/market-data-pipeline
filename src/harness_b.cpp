@@ -657,7 +657,10 @@ bool parse_options(int argc, char* argv[], Options& out)
             << "  " << argv[0]
             << " <git-commit-40-hex> <dirty:0|1> <capture.bin> <SYMBOL>"
                " [consumer:book|timestamp]"
-               " [passes|spin-sweep|dump] [spin:1000|8192]\n";
+               " [passes|dump] [spin:1000|8192]\n"
+            << "  " << argv[0]
+            << " <git-commit-40-hex> <dirty:0|1> <capture.bin> <SYMBOL>"
+               " [consumer:book|timestamp] spin-sweep\n";
         return false;
     }
 
@@ -694,7 +697,7 @@ bool parse_options(int argc, char* argv[], Options& out)
         }
     }
 
-    if (argc == 7) {
+    if (argc >= 7) {
         const std::string sixth = argv[6];
 
         if (sixth == "spin-sweep") {
@@ -704,11 +707,19 @@ bool parse_options(int argc, char* argv[], Options& out)
             out.dump_samples = true;
             out.passes = 1;
         } else {
-            const long passes = std::strtol(argv[6], nullptr, 10);
+            char* end = nullptr;
+
+            const long passes = std::strtol(argv[6], &end, 10);
+
+            if (end == argv[6] || *end != '\0') {
+                std::cerr
+                    << "error: passes must be a number, \"spin-sweep\", or \"dump\"\n";
+                return false;
+            }
 
             if (passes < 1 || passes > 20) {
                 std::cerr
-                    << "error: passes must be 1-20, or \"spin-sweep\"\n";
+                    << "error: passes must be 1-20, or use \"spin-sweep\" or \"dump\"\n";
                 return false;
             }
 
@@ -717,6 +728,13 @@ bool parse_options(int argc, char* argv[], Options& out)
     }
 
     if (argc == 8) {
+        if (out.spin_sweep) {
+            std::cerr
+                << "error: \"spin-sweep\" determines the spin count, so an "
+                "explicit spin cannot be supplied alongside it\n";
+            return false;
+        }
+
         const std::string spin_text = argv[7];
 
         if (spin_text == "1000") {
@@ -726,7 +744,7 @@ bool parse_options(int argc, char* argv[], Options& out)
         } else {
             std::cerr
                 << "error: spin must be 1000 (parking baseline) or 8192"
-                   " (tuned baseline)\n";
+                " (tuned baseline)\n";
             return false;
         }
     }
@@ -1023,11 +1041,16 @@ int main(int argc, char* argv[])
         << "# there is no first-pass cache benefit to recover. A ratio at\n"
         << "# 1.0 here means no residual paging, which is what warming\n"
         << "# was for. It is not a failed check against the 1.2 floor.\n"
-        << "# spin_count: " << options.spin
-        << (options.spin == 1000
-                ? " (parking baseline — §3's blocking condvar)\n"
-                : " (tuned baseline — §4, spins past the inter-arrival"
-                  " gap)\n")
+        << "# spin_count: "
+        << (options.spin_sweep
+                ? "swept"
+                : std::to_string(options.spin))
+        << (options.spin_sweep
+                ? " (see per-row spin_count)\n"
+                : options.spin == 1000
+                    ? " (parking baseline — §3's blocking condvar)\n"
+                    : " (tuned baseline — §4, spins past the inter-arrival"
+                      " gap)\n")
         << "#\n"
         << "# Latency is intended-send to consumer-dequeue. A datapoint is\n"
         << "# valid only if dropped_records == 0 and p99 producer lag is\n"
