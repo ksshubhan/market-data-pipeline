@@ -1,0 +1,40 @@
+GCC ThreadSanitizer on ARM64 Linux — the independent implementation (§6.6)
+
+Guest:    Ubuntu 25.10 (questing), live session, aarch64
+Host:     Apple M2, macOS 26.6.2
+VM:       UTM, QEMU backend, Hypervisor true (HVF)
+Repo:     c3b948b
+Compiler: gcc 15.2.0, libstdc++ _GLIBCXX_RELEASE 15
+Configure: cmake -G Ninja -DCMAKE_CXX_COMPILER=g++
+           -DCMAKE_CXX_FLAGS="-O1 -g -Wall -Wextra -fsanitize=thread"
+           -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=thread"
+No CMake preset was added: the base preset hardcodes a Homebrew clang path
+that does not exist on Linux, and a preset nobody can run on the development
+machine is a config file describing a build that does not happen.
+
+1/7 parser ............. Passed 0.02 sec
+2/7 mutex_queue ........ Passed 0.01 sec
+3/7 spsc_ring_buffer ... Passed 0.38 sec
+4/7 capture_file ....... Passed 0.01 sec
+5/7 replay_schedule .... Passed 0.10 sec
+6/7 replay_producer .... Passed 0.03 sec
+7/7 convert_capture .... Passed 1.88 sec
+100% tests passed, 0 tests failed out of 7. Total 2.43 sec.
+
+NEGATIVE CONTROL — c1_relaxed_publication, same build:
+WARNING: ThreadSanitizer: data race
+  Read  of size 8 by thread T2: try_pop  src/spsc_ring_buffer.hpp:130
+  Write of size 8 by thread T1: try_push src/spsc_ring_buffer.hpp:100
+The two non-atomic payload accesses, not the index. The same two lines
+LLVM's ThreadSanitizer named in evidence/c1_tsan_report.txt.
+
+Workload verified identical to the macOS runs: kCount is a hardcoded
+1'000'000 at test_spsc_ring_buffer.cpp lines 102 and 402, not read from
+the environment and not derived from hardware_concurrency. The 0.38 sec
+against 15.56 sec on a throttled x86 container is a speed difference,
+not a smaller test.
+
+Result: two independently written race detectors, two operating systems,
+two standard libraries, one verdict — clean on the valid arms, and the
+same race at the same two lines on the invalid one. Per §6.6, a clean run
+with no verified control says only that the tool was quiet.
