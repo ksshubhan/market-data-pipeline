@@ -125,8 +125,14 @@ A cutoff of **70 ns** was therefore used, sitting between one and two ticks:
 41.667 < 70 < 83.333
 
 Any measurement above 70 ns is caused by something interrupting or delaying the
-program, rather than by normal timer behaviour. These are excluded so they do not
-affect the estimate.
+program, rather than by normal timer behaviour. They are excluded from the count of
+boundary crossings.
+
+They are not removed from the denominator. The figure quoted above is
+477,956 / 1,000,000 × 41.667 = 19.91 ns. Excluding the 755 outliers from both sides
+gives 19.93 ns instead. The 0.02 ns difference is two orders of magnitude below the
+19.5–22 ns run-to-run spread, so it changes nothing — but the denominator is stated
+here rather than left to be inferred from the sentence above it.
 
 ---
 

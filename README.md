@@ -233,9 +233,9 @@ Two-thread queue microbenchmark, batched timing, 10M handoffs per arm.
 |---|---|---|
 | **A1b** | Acquire-release is **1.23×** faster than `seq_cst` in the real queue (33.07 vs 26.88 M handoffs/s) | No distribution overlap. Two runs five days apart agree: 1.25 and 1.23 |
 | **A1a** | Ordering cost is **not measurable** in a bare atomic ping-pong: relaxed 36.9, acq-rel 38.5, seq_cst 38.3 ns/handoff | A null result, and the explanation is the point — see below |
-| **A2b** | The coherence granule is **64 bytes** — contradicting `hw.cachelinesize` (128) and libc++'s `hardware_destructive_interference_size` (256) | Two runs three days apart agree: 3.56× and 3.67× against a shared line, with the 64/128/256 arms within 0.21% and 0.32% of each other. 64 bytes buys the whole benefit; 128 and 256 add nothing measurable |
+| **A2b** | The coherence granule is **64 bytes** — contradicting `hw.cachelinesize` (128) and libc++'s `hardware_destructive_interference_size` (256) | Two runs three days apart agree: 3.566× and 3.596× against a shared line, with the 64/128/256 arms within 0.207% and 0.160% of each other. 64 bytes buys the whole benefit; 128 and 256 add nothing measurable |
 | **A3b** | Natural 80-byte ring slots cost **1.81×** against 128-byte padded slots | No overlap; disassembly confirms both loops cover all 80 bytes |
-| **A4b** | Caching the opposite index saves **~10 ns/push**, 1.36× | Cached faster in **20 of 20** paired rounds in each of two runs; two ring sizes agree. The second run gives 1.47× on medians. Quote the median, not the mean: the cached arm is bimodal, 120% max-to-min against 38.5% uncached, which is core placement rather than the queue |
+| **A4b** | Caching the opposite index saves **~10 ns/push**, 1.36× | Cached faster in 17 of 20 paired rounds at 5 MB, **20 of 20** at 80 MB, and 19 of 20 on the 7 Sep re-run at 80 MB. Medians 1.400×, 1.359× and 1.396× — the headline quotes the 80 MB figure. Quote the median, not the mean: the 5 MB run's cached arm spans 17.4 to 83.4 M ops/s around a 35.3 median, which is core placement rather than the queue, and its mean ratio reads 1.52× |
 
 **A1a's null result is more informative than a number would have been.**
 A bare ping-pong serialises every handoff behind a cross-core coherence
@@ -422,9 +422,11 @@ population.
 
 The histogram is bimodal with nothing between, which is the evidence that
 the uniform-phase assumption holds. It also found ~746 multi-tick samples
-(memory stalls) and a population around **~9 µs** — context switches,
-observed before the queue existed, and the same mechanism that produces
-the scheduler floor in B1.
+(memory stalls) and **nine** microsecond-scale samples — 1.0 to 30.8 µs,
+median 11.1 µs — context switches, observed before the queue existed, and
+the same mechanism that produces the scheduler floor in B1. Nine is the
+count; the magnitude is the 11.1 µs median, and it is the ~12 µs floor B1
+measures.
 
 The full derivation — the vernier estimator and the 19.5–22 ns spread
 across eight runs — is in [`NOTES.md`](NOTES.md), the measurement
@@ -753,9 +755,15 @@ python3 -m venv .venv && .venv/bin/pip install matplotlib
 python3 tools/analyse_tail_samples.py results/tail_samples_*.csv
 ```
 
-Measurement runs require mains power and Low Power Mode off. The harness
-records UTC timestamp, capacity, spin count and QoS class into every
-results file, so those fields are self-describing.
+Measurement runs require mains power and Low Power Mode off. `harness_b`
+records UTC timestamp, capacity, spin count and QoS class into its CSV
+header, so those fields are self-describing. `harness_a` records three of
+the four — it has no spin count to record. The smaller measurement
+binaries are less complete than either: `measure_parse_cost` and
+`measure_condvar_wakeup` carry the run timestamp in the filename and not
+in the file, and `results/a1_memory_order_20260830_232947.txt` predates
+the header entirely, carrying a shuffle seed and nothing else. The 4
+September A1 re-run supersedes that one.
 
 **The commit and dirty flag are not.** Both harnesses take them from
 `argv` and neither consults git; only `convert_capture` verifies tree
