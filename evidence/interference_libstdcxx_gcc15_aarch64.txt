@@ -21,3 +21,36 @@ Result: 256/64, identical to Apple libc++ 210106 and Homebrew libc++ 220108.
 Not a measurement of hardware — a library policy keyed on the target triple.
 GCC 15 has no apple-m1 in its -mcpu list. A2b measured this machine's
 coherence granule at 64 bytes, so all three libraries are conservative by 4x.
+
+--- Correction appended 7 Sep 2026, c56d82a. The four lines above are left
+--- unedited so this file still records what was believed on 7 Sep when the
+--- probe was run. Two of them are wrong.
+
+"GCC 15 has no apple-m1 in its -mcpu list" is false. aarch64-cores.def
+defines apple-m1 with real MIDR values and V8_5A, and -Q --help=target
+echoes the name back. What is true is narrower and more useful: all Apple
+parts are wired to the generic_armv8_a tuning model, whose prefetch table
+leaves l1_cache_line_size at -1, and 256 is what GCC emits when the tuning
+model declines to state a line size. -mcpu=apple-m1 looks like asking GCC
+about this chip and getting an answer; it is asking GCC about this chip and
+being routed to a table with the field unset. See section 5.
+
+"All three libraries are conservative by 4x" is not the defensible claim,
+and section 5 says so explicitly. -mcpu=neoverse-n1, neoverse-v1,
+neoverse-v2, cortex-a76 and cortex-x3 builds of this same probe all report
+64/64, confirmed through <new> and not only the macro. The claim is that one
+direct measurement and one compiler independently say 64 - A2b on this M2,
+and GCC for every aarch64 implementation it actually models - while 256 is
+the price of not telling the toolchain what it is building for. libc++ has
+no tuning notion at all and cannot participate in the distinction. Neither
+library measured anything.
+
+Note on evidence: the -mcpu sweep those figures come from has no committed
+artifact. It exists as prose in section 5, in the README and in study.md.
+This correction therefore cites a document rather than a file, which is a
+weaker footing than the run recorded above, and it is open work.
+
+Found by comparing this file against section 5 during the rev 17 audit.
+Recorded as instance twenty-two in section 13: an artifact carrying a claim
+about an external source that a later revision falsified without reopening
+the artifact.
