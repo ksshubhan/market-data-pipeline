@@ -559,9 +559,10 @@ tool was quiet.
 
 **ThreadSanitizer clean on the valid arms**, on two toolchains (Homebrew
 clang and AppleClang). Both are LLVM/libc++ lineage, so this is stated as
-"two LLVM toolchains" rather than as independent confirmation; libstdc++
-on Linux ARM64 would be the genuinely independent data point and remains
-open.
+"two LLVM toolchains" rather than as independent confirmation. GCC's
+ThreadSanitizer on ARM64 Linux would be the genuinely independent
+implementation, and it remains open: no GCC TSan run has been made
+against any suite, so every clean verdict here is LLVM's.
 
 **The C1 broken-ordering arm is expected to be flagged**, and that report
 is the evidence rather than a failure of the criterion. C1 removes the
@@ -752,9 +753,23 @@ is only meaningful where one arm crosses it and the other does not. At
 the comparison inverts — that is an artifact of the fixed threshold, not
 a reversal.
 
-**Two toolchains, one lineage.** Homebrew clang and AppleClang are both
-LLVM/libc++. libstdc++ on ARM64 Linux remains the outstanding independent
-check, both for ThreadSanitizer and for the interference-size constants.
+**Two toolchains, one lineage — for ThreadSanitizer.** Homebrew clang and
+AppleClang are both LLVM/libc++, so the clean TSan verdict rests entirely
+on one implementation. GCC's ThreadSanitizer on ARM64 Linux is the
+outstanding independent check and has not been run.
+
+**The interference constants are no longer outstanding.** libstdc++ 15.2.0
+on aarch64 reports 256 destructive and 64 constructive — identical to both
+libc++ builds. Four readings, two independent library lineages, four
+versions, all 256/64, against a coherence granule measured at 64 bytes on
+this machine (A2b). The agreement is the stronger result: 256 is the
+architecture-wide convention rather than one vendor's choice, and it
+overshoots this implementation by 4x. Neither library knows anything about
+this chip — GCC 15 has no apple-m1 among its -mcpu values — so the constant
+is policy keyed on the target triple, not a hardware reading. Measured in
+an Ubuntu 25.10 aarch64 guest under UTM;
+`evidence/interference_libstdcxx_gcc15_aarch64.txt`, probe at
+`tools/interference_probe.cpp`.
 
 **B2 is closed as an analysis result rather than a measurement.** The
 compression factor is 38,791, giving 100k msg/s mean offered load from the
