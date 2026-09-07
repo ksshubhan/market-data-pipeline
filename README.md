@@ -236,10 +236,24 @@ own-index loads that change from `ldr` to `ldar` under `seq_cst`.
 
 **Three of the M2's cache numbers disagree**, and this project can say
 which one governs: `hw.cachelinesize` reports 128 (fetch granularity),
-libc++ reports 256 (conservative by 4×), and A2b measures **64**
-(coherence). The libc++ figure is a property of a named library version —
-LLVM libc++ 220108 — and Apple's system libc++ 210106 reports the same,
-so their agreement is weak evidence rather than independent confirmation.
+the standard library reports 256, and A2b measures **64** (coherence).
+
+**The 256 turned out to be a default rather than a judgement.** Both
+libc++ builds report it — LLVM 220108 and Apple 210106 — but they are one
+lineage, so that agreement was never independent confirmation. libstdc++
+15 on ARM64 Linux also reports 256 in a default build, and then moves:
+`neoverse-n1`, `neoverse-v1`, `neoverse-v2`, `cortex-a76` and `cortex-x3`
+all give **64**, while `generic` and `apple-m1` give 256. GCC emits the
+constant from the tuning model's prefetch table, and the generic table
+leaves the cache-line field unset.
+
+So the sharper statement is not that the libraries are conservative by
+4×. It is that **a direct measurement and a compiler independently arrive
+at 64** — A2b on this machine, and GCC for every aarch64 part it models —
+while 256 is what you get for not telling the toolchain what it is
+building for. Details and the source trace are in the limitations
+section; the constant is always quoted with its library version because
+it is a property of one, not of the hardware.
 
 ### There is no compare-and-swap in this queue
 
