@@ -4,9 +4,14 @@ A wait-free SPSC ring buffer feeding a market data handler, measured
 against a tuned `std::mutex` + condition variable queue under controlled
 offered load, on macOS/ARM64.
 
-C++20. ~2,000 lines including tests and harnesses. Every measurement in
-this README is reproducible from this repository with the commands in
-[How to reproduce](#how-to-reproduce).
+**p99 handoff latency 125 ns against 375 ns** for the tuned baseline at
+500k msg/s, both arms passing the same validity gates.
+
+C++20, ~8,500 lines of source excluding blanks and comments and ~12,800
+including them, across 34 files in `src/`. Every measurement in this
+README is reproducible from this repository with the commands in
+[How to reproduce](#how-to-reproduce), and every figure quoted here is
+recomputed from a committed artifact rather than transcribed.
 
 ---
 
@@ -35,8 +40,9 @@ market moved, because bursts and volatility arrive together.
 
 ![p99.9 latency vs offered load](results/b1_latency_vs_load.png)
 
-*p99.9 end-to-end latency against offered rate, log/log, median of three
-passes, valid datapoints only. The three lines converge because all three
+*p99.9 end-to-end latency against offered rate, log/log, valid datapoints
+only. Median of three passes per baseline configuration; the spsc arm is
+configured identically in both files, so its points are the median of six. The three lines converge because all three
 sit on the same ~12 µs scheduler floor — see [the scheduler
 floor](#the-scheduler-floor-why-p999-is-not-the-headline-here). The
 baselines stop where they fail the producer-lag gate: the parking
@@ -58,7 +64,11 @@ power, Low Power Mode off, `QOS_CLASS_USER_INTERACTIVE` requested and
 
 Latency is measured from *intended* send time to consumer-processed, with
 the send schedule computed before the clock starts. Median of three
-passes; only datapoints passing both validity gates are shown.
+passes for each baseline configuration. The spsc arm is identically
+configured in both runs, so `analyse_harness_b.py` pools them and its
+points are the median of six — the script prints the count per cell, and
+it reads 6/6 against 3/3. Only datapoints passing both validity gates are
+shown.
 
 Three configurations:
 
@@ -223,9 +233,9 @@ Two-thread queue microbenchmark, batched timing, 10M handoffs per arm.
 |---|---|---|
 | **A1b** | Acquire-release is **1.23×** faster than `seq_cst` in the real queue (33.07 vs 26.88 M handoffs/s) | No distribution overlap. Two runs five days apart agree: 1.25 and 1.23 |
 | **A1a** | Ordering cost is **not measurable** in a bare atomic ping-pong: relaxed 36.9, acq-rel 38.5, seq_cst 38.3 ns/handoff | A null result, and the explanation is the point — see below |
-| **A2b** | The coherence granule is **64 bytes** — contradicting `hw.cachelinesize` (128) and libc++'s `hardware_destructive_interference_size` (256) | 64/128/256 within 0.21%; 16 bytes apart is **3.56×** slower, with no overlap |
+| **A2b** | The coherence granule is **64 bytes** — contradicting `hw.cachelinesize` (128) and libc++'s `hardware_destructive_interference_size` (256) | Two runs three days apart agree: 3.56× and 3.67× against a shared line, with the 64/128/256 arms within 0.21% and 0.32% of each other. 64 bytes buys the whole benefit; 128 and 256 add nothing measurable |
 | **A3b** | Natural 80-byte ring slots cost **1.81×** against 128-byte padded slots | No overlap; disassembly confirms both loops cover all 80 bytes |
-| **A4b** | Caching the opposite index saves **~10 ns/push**, 1.36× | Cached faster in **20 of 20** paired rounds; two ring sizes agree |
+| **A4b** | Caching the opposite index saves **~10 ns/push**, 1.36× | Cached faster in **20 of 20** paired rounds in each of two runs; two ring sizes agree. The second run gives 1.47× on medians. Quote the median, not the mean: the cached arm is bimodal, 120% max-to-min against 38.5% uncached, which is core placement rather than the queue |
 
 **A1a's null result is more informative than a number would have been.**
 A bare ping-pong serialises every handoff behind a cross-core coherence
@@ -408,11 +418,19 @@ at or above ~2 ticks is a model violation by definition. A threshold of
 200 would have silently absorbed real violations into the normal
 population.
 
+![timer calibration histogram](results/timer_calibration.png)
+
 The histogram is bimodal with nothing between, which is the evidence that
 the uniform-phase assumption holds. It also found ~746 multi-tick samples
 (memory stalls) and a population around **~9 µs** — context switches,
 observed before the queue existed, and the same mechanism that produces
 the scheduler floor in B1.
+
+The full derivation — the vernier estimator and the 19.5–22 ns spread
+across eight runs — is in [`NOTES.md`](NOTES.md), the measurement
+notebook. It covers calibration, record layout, the
+A-series and C1, and stops at the dataset regeneration on 4 September; the
+queue tuning and B1 are in this file rather than there.
 
 ### Clock domains
 
@@ -575,7 +593,10 @@ tool was quiet.
 two independent implementations. Homebrew clang and AppleClang are one
 lineage, LLVM/libc++. GCC 15.2.0 with libstdc++ 15, on ARM64 Linux, is a
 separately written detector on a different operating system and a
-different standard library. All seven suites pass under both.
+different standard library. All seven suites pass under both, and both
+runs are committed rather than asserted: `evidence/tsan_llvm_ctest_20260907.txt`
+and `evidence/tsan_gcc15_aarch64.txt`. Each carries its own negative
+control, run in the same build as the suites it certifies.
 
 **The independent run is worth more than a third green tick, because the
 control agrees too.** GCC's ThreadSanitizer flags C1 at
@@ -703,32 +724,52 @@ bash env/dump_environment.sh
 # A-series microbenchmarks. <experiment> is one of:
 #   a1   a2   a2b   a3b   a4   a4b
 # a1 runs both A1a (atomic-only, three orderings) and A1b (queue arms).
-./build/default/harness_a $(git rev-parse HEAD) 0 a1
+# harness_a writes to stdout and creates no file, so redirect it. The
+# committed results/a*.txt are named from the utc_timestamp the harness
+# stamps into its own output.
+./build/default/harness_a $(git rev-parse HEAD) 0 a1 > /tmp/a1.txt
 
 # B1 load sweep, both baseline configurations
 ./build/default/harness_b $(git rev-parse HEAD) 0 <out.bin> BTCUSDT book 3 8192
 ./build/default/harness_b $(git rev-parse HEAD) 0 <out.bin> BTCUSDT book 3 1000
 
+# The spin sweep behind the choice of 8192. Three candidates an order of
+# magnitude apart, not a scan. It takes no seventh argument: the sweep
+# sets the spin itself.
+./build/default/harness_b $(git rev-parse HEAD) 0 <out.bin> BTCUSDT book spin-sweep
+
 # Post-processing and graphs. The tables print with the standard library
 # alone; the graphs need matplotlib, which on a Homebrew Python needs a
-# virtual environment (PEP 668).
+# virtual environment (PEP 668). Python dependencies for tools/ are in
+# requirements.txt.
 python3 -m venv .venv && .venv/bin/pip install matplotlib
 .venv/bin/python tools/analyse_harness_b.py results/harness_b_spin8192_*.csv \
                                             results/harness_b_spin1000_*.csv
 
-# Tail structure
+# Tail structure. The dump is ~48 MB per run and results/tail_samples_*.csv
+# is gitignored, so the second command needs the first to have been run in
+# this clone. Its output, results/tail_stalls_*.txt, is committed.
 ./build/default/harness_b $(git rev-parse HEAD) 1 <out.bin> BTCUSDT book dump
 python3 tools/analyse_tail_samples.py results/tail_samples_*.csv
 ```
 
 Measurement runs require mains power and Low Power Mode off. The harness
-records its own git commit, dirty flag, UTC timestamp, capacity, spin
-count and QoS class into every results file, so each artifact is
-self-describing rather than paired with an environment dump by timestamp.
+records UTC timestamp, capacity, spin count and QoS class into every
+results file, so those fields are self-describing.
 
-Every invocation above has been run as written. The two dirty flags differ
-deliberately: measurement runs pass `0` and require a clean tree, while the
-tail dump passes `1` because it is a diagnostic rather than a reported
+**The commit and dirty flag are not.** Both harnesses take them from
+`argv` and neither consults git; only `convert_capture` verifies tree
+state itself, via `--require-clean`. So a results file's `git_dirty: no`
+is the operator's assertion, and the corroboration is
+`env/dump_environment.sh`, which computes the same field from `git status`
+and is re-run before each session. Three artifacts from 4 September record
+`git_dirty: no` beside environment dumps taken in the same second at the
+same commit recording `yes`; they are kept, and the A2b and A4b figures
+above come from re-runs on a tree verified clean before the run. Compare
+the pair, not the flag.
+
+The two dirty flags differ deliberately: measurement runs pass `0`, while
+the tail dump passes `1` because it is a diagnostic rather than a reported
 result and is expected to run against modified source.
 
 ---
@@ -747,7 +788,17 @@ Expect higher run-to-run variance than a pinned Linux box would show.
 
 **No PMU access.** `perf c2c` for false-sharing counter evidence is Linux
 + PMU only, so A2b infers the coherence granule from timing rather than
-from counters.
+from counters. The disassembly of both A2b arms is committed at
+`evidence/a2b_arm64_disassembly.txt`, confirming the loops differ only in
+slot stride.
+
+**Measurement provenance is corroborated, not enforced.** The harnesses
+trust the caller's commit and dirty flag; the environment dump computes
+both from git. Two sources that agree is the check, and it is weaker than
+`convert_capture`'s, which verifies tree state before it will write. The
+harnesses were left alone deliberately — the gap is documented and the
+affected artifacts re-run, which costs minutes, where making three
+binaries self-verifying costs a day and re-verification on two toolchains.
 
 **Coarse timer.** ~41.67 ns per tick. On x86, `rdtsc` is over 100× finer.
 This methodology exists *because* the ARM timer is coarse.
