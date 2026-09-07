@@ -1,0 +1,23 @@
+libstdc++ interference constants, ARM64 Linux — the independent data point (§5)
+
+Guest:    Ubuntu 25.10 (questing), live session, aarch64
+Host:     Apple M2, macOS 26.6.2
+VM:       UTM, QEMU backend, Hypervisor true (HVF), Architecture aarch64
+Repo:     01e5cfa
+Command:  g++ -std=c++20 -Wall -Wextra -o /tmp/ip tools/interference_probe.cpp
+Warnings: none (-Winterference-size did not fire)
+
+probe: interference constants
+compiler: gcc 15.2.0
+library: libstdc++ __GLIBCXX__ 20250917 _GLIBCXX_RELEASE 15
+target: aarch64
+hardware_destructive_interference_size: 256
+hardware_constructive_interference_size: 64
+__GCC_DESTRUCTIVE_SIZE: 256
+macro agrees with <new>: yes
+__GCC_CONSTRUCTIVE_SIZE: 64
+
+Result: 256/64, identical to Apple libc++ 210106 and Homebrew libc++ 220108.
+Not a measurement of hardware — a library policy keyed on the target triple.
+GCC 15 has no apple-m1 in its -mcpu list. A2b measured this machine's
+coherence granule at 64 bytes, so all three libraries are conservative by 4x.
