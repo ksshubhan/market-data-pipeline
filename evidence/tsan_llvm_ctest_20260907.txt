@@ -1,0 +1,84 @@
+LLVM ThreadSanitizer on macOS/ARM64 — the full suite under the tsan preset (§6.6)
+
+Host:      Apple M2, macOS 26.6.2, build 25G83
+Compiler:  Homebrew clang 22.1.8, libc++ _LIBCPP_VERSION 220108
+SDK:       26.5
+Repo:      4a93c03, tree clean
+Configure: cmake --build --preset tsan (build/tsan), a full reconfigure
+           rather than an incremental build over existing objects
+
+Why this file exists. Until 7 Sep the committed LLVM ThreadSanitizer
+evidence was three artifacts dated 31 Aug covering harness_c and the spsc
+ring buffer test. None of them was a ctest run, and four of the seven
+registered suites did not exist when they were taken: test_convert_capture
+was added 6 Sep at 4837bbe. §13 recorded six suites, the README claimed
+seven, and neither number had an artifact behind it on this toolchain
+while the GCC side had a committed 1/7-through-7/7 listing. This is that
+listing for LLVM.
+
+1/7 parser ............. Passed  0.75 sec
+2/7 mutex_queue ........ Passed  0.27 sec
+3/7 spsc_ring_buffer ... Passed  0.58 sec
+4/7 capture_file ....... Passed  0.31 sec
+5/7 replay_schedule .... Passed  2.90 sec
+6/7 replay_producer .... Passed  1.53 sec
+7/7 convert_capture .... Passed 10.81 sec
+100% tests passed, 0 tests failed out of 7. Total 17.16 sec.
+
+NEGATIVE CONTROL — c1_relaxed_publication, same build, same session:
+WARNING: ThreadSanitizer: data race
+  Read  of size 8 by thread T2: try_pop  src/spsc_ring_buffer.hpp:130
+  Write of size 8 by thread T1: try_push src/spsc_ring_buffer.hpp:100
+ThreadSanitizer: reported 10 warnings; process aborted, which is the
+expected exit for a control.
+
+The two lines, quoted from src/spsc_ring_buffer.hpp (192 lines):
+
+  100:        buffer_[tail & kMask] = value;
+  130:        value = buffer_[head & kMask];
+
+Both are the payload copy — the store into the slot and the load out of
+it. Neither is an index. That distinction is the result: acquire/release
+exists to order the payload against the index publication, and it is the
+payload TSan names when the edge is removed.
+
+Three things this run shows that the 31 Aug artifacts could not.
+
+The arm is the uncached one. The template signature in every frame is
+SpscRingBuffer<Record, 2ul, 128ul, (SpscMemoryOrder)2, (SpscIndexCaching)0>
+— five parameters. The 31 Aug report has four, and names :93 against :72,
+because spsc_ring_buffer.hpp has changed since. §13 flagged the uncached
+arm added in A4 as a shipped configuration that arguably ought to be
+covered; the control runs it.
+
+The tearing signature is field-by-field, and §6.5a predicted it. The ten
+warnings sit at ten consecutive addresses — ...ac00, ac08, ac10, ac18,
+ac20, ac28, ac30, ac38, ac40, ac48 — an eight-byte stride across ten
+words, which is the 80 bytes of Record. TSan did not report "a race in the
+queue". It reported the whole payload copy racing one field at a time.
+
+The last warning is a 2-byte read against an 8-byte write, at ac48. That
+is the trailing sub-word field of Record, visible as a width mismatch
+because the consumer reads it narrow while the producer's store covers the
+full word.
+
+Cross-toolchain: GCC 15.2.0 with libstdc++ 15 on Ubuntu 25.10 aarch64
+names the same two lines, :130 in try_pop against :100 in try_push
+(evidence/tsan_gcc15_aarch64.txt, repo c3b948b). Two independently written
+detectors, two operating systems, two standard libraries, one verdict —
+clean on the valid arms, the same race at the same two lines on the
+invalid one.
+
+Also recorded: c1_relaxed_publication printed "no observable corruption
+detected in this finite native run" while TSan reported ten races in that
+same run. The program is invalid whether or not a given execution tears,
+which is why the sanitiser is the evidence and the observed output is not.
+
+What this file does not cover. The seven suites are the test_* targets
+registered with add_test. The harness binaries are not among them.
+harness_c's TSan validation rests on results/harness_c_tsan_20260831.txt
+and results/harness_c_apple_tsan_20260831.txt, both taken before the A4
+index-caching work changed spsc_ring_buffer.hpp, and neither has been
+re-run. Per §6.6, a clean run with no verified control says only that the
+tool was quiet; this file carries its control, those two do not carry a
+current one.
