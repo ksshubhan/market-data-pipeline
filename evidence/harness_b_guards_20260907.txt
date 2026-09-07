@@ -1,0 +1,111 @@
+harness_b run-time guards — controls, 7 Sep 2026 (§6.6, §13)
+
+Repo:     355f781, tree clean before and after; each control ran with the
+          tree deliberately dirty and the dirty flag passed as 1.
+Machine:  Apple M2, macOS 26.6.2, mains power, Low Power Mode off.
+Build:    cmake --build --preset default, Homebrew LLVM, exit 0 verified
+          before every run. No run's output was read after a failed build.
+Dataset:  captures/btcusdt_futures_bookTicker_20260820_130813.bin
+          769,971,616 bytes, 13,749,492 records.
+Command:  ./build/default/harness_b GIT_COMMIT 1 DATASET BTCUSDT book 1 8192
+
+harness_b has three run-time consistency checks that abort rather than
+warn. None had ever been demonstrated to fire. Each was armed here by a
+one-line injected fault, built, run, observed, and reverted. All three
+fired at the first datapoint of the sweep — pass 0, rate 100000, arm spsc.
+
+
+Guard 1 — QoS not applied. src/harness_b.cpp:498
+
+  -    if (qos != QosResult::applied) {
+  +    if (qos == QosResult::applied) {
+
+  pass 0  rate 100000  arm spsc
+  error: QoS not applied (applied) on spsc at 100000 Hz
+  exit=1
+
+  The "(applied)" in the message is the tell that the branch fired on a
+  healthy run. This is an inverted comparison, not an injected fault: it
+  shows the branch is reachable and the diagnostic correct. It does not
+  show that QoS can fail to apply on this machine.
+
+
+Guard 2 — counter divergence. src/harness_b.cpp:523
+
+  -    if (stats.full_rejections != stats.dropped_records) {
+  +    if (stats.full_rejections + 1 != stats.dropped_records) {
+
+  pass 0  rate 100000  arm spsc
+  error: full_rejections (0) != dropped_records (0) — the two counters
+  have diverged
+  exit=1
+
+  The message prints (0) != (0), which looks absurd and is right: the
+  injected +1 lives in the comparison, not in what is reported. The
+  diagnostic reports the real counters. Worth knowing before reading one
+  of these in anger.
+
+
+Guard 3 — consumer did no work. src/harness_b.cpp:531
+
+  -    if (mode == ConsumerMode::Book && book.update_count != delivered) {
+  +    if (mode == ConsumerMode::Book && book.update_count + 1 != delivered) {
+
+  pass 0  rate 100000  arm spsc
+  error: book updates (2000000) != delivered (2000000) — the consumer did
+  not do the work the methodology claims
+  exit=1
+
+  2,000,000 is kSliceLength, the same value the committed CSV headers
+  record as slice_length. The equal figures confirm the consumer processed
+  the whole slice; the abort is entirely the injected +1.
+
+
+Guard 4 — dataset cannot be opened. Not injected.
+
+  ./build/default/harness_b GIT_COMMIT 1 DATASET.bin BTCUSDT book 1 8192
+  error: cannot open DATASET.bin: cannot_open
+  exit=1
+
+  Fired by accident, from a genuine bad path typed in place of the
+  dataset, before any fault was injected. A guard shown firing on a real
+  failure is stronger evidence than one shown firing on an injected one,
+  and this is the only guard in this file with that standing.
+
+
+What this establishes, and what it does not.
+
+Establishes: all four branches are reachable, each prints the diagnostic
+it was written to print, and each exits 1 rather than continuing. Guard 3
+additionally confirms the consumer processes the full slice in a healthy
+run.
+
+Does not establish: that guards 1 through 3 can fire from a real
+divergence. Guard 1 in particular was armed by inverting its comparison
+rather than by making QoS fail, so the condition itself has never been
+observed true. Guards 2 and 3 were armed by injecting an offset into the
+comparison, not by breaking the accounting that would produce a genuine
+mismatch. They are hand-verified in the same sense as §7.6's three
+converter guards, and for the same reason: producing the real condition
+needs a fault that cannot be injected from outside the binary.
+
+Not covered by any automated suite. harness_b is not among the seven
+ctest entries, so nothing in the test suite exercises these paths. This
+file is the only record that they work.
+
+
+One incidental finding, recorded because it was expected to be a defect
+and is not.
+
+harness_b opens its output CSV at line 1007, and all four exit sites are
+in or below the sweep loop at line 966 — which runs to completion first.
+An aborted run therefore leaves no file in results/ at all. Every one of
+these four controls exited with results/ untouched, verified by
+git status --porcelain showing only the modified source.
+
+The audit predicted the opposite: a partial CSV carrying a complete-
+looking provenance header, which is the shape of the argc == 8 defect
+closed at 527146d. The prediction was made by reading line numbers and
+inferring call order from them, and was wrong. The output file is not
+created until the run has survived every guard, which is the property
+that defect lacked.
