@@ -585,6 +585,34 @@ within-arm spread on A1 from 21.1% to 5.0%.
 
 ## Correctness evidence
 
+**The seven `ctest` entries, and what each is for.** `test_parser` covers
+the bookTicker key scanner and the fixed-point decimal conversion, with
+every check written as an ordinary runtime comparison rather than an
+`assert` — both presets build RelWithDebInfo, which defines `NDEBUG`, so
+an assert-based suite would compile to nothing and exit 0 whatever the
+parser did. `test_spsc_ring_buffer` covers the queue itself, instantiated
+both cached and uncached, because A4's uncached arm has to behave
+identically. `test_mutex_queue` covers the baseline: FIFO order, capacity,
+rejection when full, wrapped slot indices, the condition-variable wake and
+close semantics — a broken baseline would flatter the headline result, so
+it is tested rather than assumed. `test_capture_file` covers the dataset
+reader by building a valid ten-record file in memory, corrupting exactly
+one field per case and asserting the specific error comes back; a
+validator tested only against good input tests nothing.
+`test_replay_schedule` is eight cases of pure arithmetic with no threads
+and no clock, and it exists for one trap: written as
+`max(0, current - previous)` the operands are unsigned, so a backwards
+capture-clock step wraps instead of clamping, and the wrapped gap sends
+the schedule silently *backwards* rather than forwards — a producer reads
+that as already overdue and sends immediately, destroying pacing with no
+visible symptom. `test_replay_producer` covers the rejection path, which
+had never executed before that file existed, and which is where §6.5a's
+correctness oracle gets its precondition. `test_convert_capture` drives
+the converter as a child process across 898 lines, because exit statuses,
+stderr and what is left on disk do not survive being called as a
+function — and its own header records the three of the converter's ten
+guards it cannot reach.
+
 **The clean result means something because the control fires.** Running
 the deliberately-broken C1 arm in the same TSan build produces a data race
 naming `spsc_ring_buffer.hpp:130` (the payload read in `try_pop`) against
