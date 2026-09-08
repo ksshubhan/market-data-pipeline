@@ -826,16 +826,23 @@ bash env/dump_environment.sh
 
 # Post-processing and graphs. The tables print with the standard library
 # alone; the graphs need matplotlib, which on a Homebrew Python needs a
-# virtual environment (PEP 668). Python dependencies for tools/ are in
-# requirements.txt.
+# virtual environment (PEP 668). Python dependencies for tools/ and
+# scripts/ are pinned in requirements.txt and installed from it below.
 #
-# Two tools overwrite committed artifacts in place and warn about
-# nothing: this one rewrites results/b1_latency_vs_load.png and
-# results/b1_percentile_distribution.png, and src/calibrate.cpp rewrites
-# results/timer_calibration.csv. A clean clone is dirty afterwards, and
-# the harness commands below take their dirty flag from argv. Check
-# git status before measuring, or run these last.
-python3 -m venv .venv && .venv/bin/pip install matplotlib
+# The three graphs regenerate bit-for-bit under the pins above.
+# Deleting results/b1_latency_vs_load.png,
+# results/b1_percentile_distribution.png or
+# results/timer_calibration.png and re-running the command that
+# writes it reproduces the committed file with the same md5, checked
+# on macOS at matplotlib 3.11.1. Nothing is claimed for an unpinned
+# install: a different matplotlib may write different bytes.
+#
+# src/calibrate.cpp is the exception. It rewrites
+# results/timer_calibration.csv with a fresh 1,000,000-sample timing
+# run rather than a redraw, so the clone does go dirty there. The
+# harness commands below take their dirty flag from argv. Check git
+# status before measuring, or run these last.
+python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python tools/analyse_harness_b.py results/harness_b_spin8192_*.csv \
                                             results/harness_b_spin1000_*.csv
 
@@ -865,7 +872,7 @@ python3 tools/analyse_tail_samples.py results/tail_samples_*.csv
 # outlier populations. Takes no arguments and writes
 # results/timer_calibration.csv, overwriting the committed one.
 ./build/default/calibrate
-python3 scripts/plot_calibration.py
+.venv/bin/python scripts/plot_calibration.py
 
 # Harness C correctness stress. The 2,000,000,000-message run quoted
 # above needs the argument; the default is 100,000,000. Writes to
