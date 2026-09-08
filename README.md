@@ -279,12 +279,29 @@ of the tail. No read-modify-write, no `ldxr`/`stxr` exclusive pair, no
 64-bit access on ARM64 is already indivisible in hardware. What it buys is
 C++ semantics: data-race freedom, compiler discipline, and ordering.
 
-The disassembly also corrected an assumption. Acquire loads compile to
-**`ldapr`/`ldapur`** — ARMv8.3 RCpc — not `ldar`, and release stores to
-`stlur`, an ARMv8.4 unscaled form. `ldar` is RCsc, stronger than acquire
-requires; clang uses the cheaper RCpc form where the standard permits.
-That is the mechanism behind A1b: sequential consistency cannot use RCpc,
-so `seq_cst` forces `ldar`.
+The disassembly also corrected an assumption about acquire ordering.
+Acquire loads compile to **`ldapr`/`ldapur`** — RCpc forms provided by
+FEAT_LRCPC and FEAT_LRCPC2 — rather than `ldar`. `ldar` provides RCsc
+ordering and is stronger than acquire requires here; the
+RCpc-versus-RCsc distinction is entirely on the load side. Release
+stores remain ordinary release stores: there is no separate RCpc
+store-release variant for the GPR forms used here. This is also the
+mechanism behind A1b: `seq_cst` cannot use the weaker RCpc acquire, so
+its acquire load must use the stronger RCsc form.
+
+The four mnemonics differ for a second, unrelated reason: direction and
+addressing mode. `ldar`, `ldapr`, and `stlr` have no nonzero
+immediate-offset form, while `ldapur` and `stlur` are the
+unscaled-immediate forms provided by FEAT_LRCPC2 in ARMv8.4-A. Here
+`tail_` is at offset `0` and `head_` at offset `0x80`, so `push_once`
+acquire-loads `head_` with `ldapur` and release-stores `tail_` with
+`stlr`, while `pop_once` acquire-loads `tail_` with `ldapr` and
+release-stores `head_` with `stlur`. The producer and consumer stores
+therefore have the same release ordering but different addressing forms;
+there is no RCpc store-release choice involved. As a direct encoding
+check, `llvm-mc` accepts `ldapr` with `+rcpc`, requires `+rcpc-immo` for
+`ldapur` and `stlur`, and rejects nonzero offsets for `ldar`, `ldapr`,
+and `stlr` even with both RCPC features enabled.
 
 ---
 
