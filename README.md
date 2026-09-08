@@ -459,12 +459,20 @@ population.
 ![timer calibration histogram](results/timer_calibration.png)
 
 The histogram is bimodal with nothing between, which is the evidence that
-the uniform-phase assumption holds. It also found ~746 multi-tick samples
-(memory stalls) and **nine** microsecond-scale samples — 1.0 to 30.8 µs,
-median 11.1 µs — context switches, observed before the queue existed, and
-the same mechanism that produces the scheduler floor in B1. Nine is the
-count; the magnitude is the 11.1 µs median, and it is the ~12 µs floor B1
-measures.
+the uniform-phase assumption holds. In the committed run it found 746
+multi-tick samples (memory stalls) and **nine** microsecond-scale samples
+— 1.0 to 30.8 µs, median 11.1 µs — context switches, observed before the
+queue existed, and the same mechanism that produces the scheduler floor in
+B1. Nine is the count; the magnitude is the 11.1 µs median, and it is the
+~12 µs floor B1 measures.
+
+Both counts belong to that run rather than to the machine, and a re-run
+finds different numbers in both buckets. They recompute from
+`results/timer_calibration.csv` under the bounds `calibrate` itself uses:
+multi-tick is 70 ns inclusive to 1 µs exclusive, the microsecond
+population is 1 µs and above, and the two therefore do not overlap. An
+open-ended threshold at 70 ns counts 755 by sweeping the microsecond
+samples into the multi-tick bucket.
 
 The full derivation — the vernier estimator and the 19.5–22 ns spread
 across eight runs — is in [`NOTES.md`](NOTES.md), the measurement
