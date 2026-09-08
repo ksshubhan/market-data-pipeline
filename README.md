@@ -602,7 +602,11 @@ within-arm spread on A1 from 21.1% to 5.0%.
 
 ## Correctness evidence
 
-**The seven `ctest` entries, and what each is for.** `test_parser` covers
+**The seven `ctest` entries, and what each is for.** `ctest --show-only`
+lists them as `parser`, `mutex_queue`, `spsc_ring_buffer`, `capture_file`,
+`replay_schedule`, `replay_producer` and `convert_capture`, in that order;
+each runs the `test_`-prefixed binary of the same name, and it is those
+binaries the descriptions below name. `test_parser` covers
 the bookTicker key scanner and the fixed-point decimal conversion, with
 every check written as an ordinary runtime comparison rather than an
 `assert` — both presets build RelWithDebInfo, which defines `NDEBUG`, so
