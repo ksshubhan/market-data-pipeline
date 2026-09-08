@@ -1,0 +1,175 @@
+A2b false sharing and A3b slot stride — disassembly, 8 Sep 2026 (§5, §6.5, §13)
+
+Host:       Apple M2, macOS 26.6.2, build 25G83
+Compiler:   Homebrew clang 22.1.8, target arm64-apple-darwin25.6.0
+Disassembler: Homebrew LLVM llvm-objdump 22.1.8
+SDK:        26.5
+Flags:      -O2 -g -Wall -Wextra (preset default, RelWithDebInfo)
+Repo:       8eb0c9b, tree clean (verified by this script via git, not asserted)
+Command:    /opt/homebrew/opt/llvm/bin/llvm-objdump -d build/default/check_a2b_assembly
+
+Supersedes evidence/a2b_arm64_disassembly.txt, which recorded
+only the four store loops, reordered them by hand out of link
+order, and carried no provenance. The four A3b slot functions
+are in the same binary and were in no committed artifact at
+all, while the README cited their disassembly as evidence.
+
+Symbols are left mangled and in link order, as objdump emits
+them.
+
+--- store_loop_16 ---
+__Z13store_loop_16R17SeparatedCountersILm16EEy
+100000c7c: b40000c1    	cbz	x1, 0x100000c94 <__Z13store_loop_16R17SeparatedCountersILm16EEy+0x18>
+100000c80: 52800028    	mov	w8, #0x1                ; =1
+100000c84: c89ffc08    	stlr	x8, [x0]
+100000c88: 91000508    	add	x8, x8, #0x1
+100000c8c: f1000421    	subs	x1, x1, #0x1
+100000c90: 54ffffa1    	b.ne	0x100000c84 <__Z13store_loop_16R17SeparatedCountersILm16EEy+0x8>
+100000c94: d65f03c0    	ret
+
+--- store_loop_64 ---
+__Z13store_loop_64R17SeparatedCountersILm64EEy
+100000c28: b40000c1    	cbz	x1, 0x100000c40 <__Z13store_loop_64R17SeparatedCountersILm64EEy+0x18>
+100000c2c: 52800028    	mov	w8, #0x1                ; =1
+100000c30: c89ffc08    	stlr	x8, [x0]
+100000c34: 91000508    	add	x8, x8, #0x1
+100000c38: f1000421    	subs	x1, x1, #0x1
+100000c3c: 54ffffa1    	b.ne	0x100000c30 <__Z13store_loop_64R17SeparatedCountersILm64EEy+0x8>
+100000c40: d65f03c0    	ret
+
+--- store_loop_128 ---
+__Z14store_loop_128R17SeparatedCountersILm128EEy
+100000c44: b40000c1    	cbz	x1, 0x100000c5c <__Z14store_loop_128R17SeparatedCountersILm128EEy+0x18>
+100000c48: 52800028    	mov	w8, #0x1                ; =1
+100000c4c: c89ffc08    	stlr	x8, [x0]
+100000c50: 91000508    	add	x8, x8, #0x1
+100000c54: f1000421    	subs	x1, x1, #0x1
+100000c58: 54ffffa1    	b.ne	0x100000c4c <__Z14store_loop_128R17SeparatedCountersILm128EEy+0x8>
+100000c5c: d65f03c0    	ret
+
+--- store_loop_256 ---
+__Z14store_loop_256R17SeparatedCountersILm256EEy
+100000c60: b40000c1    	cbz	x1, 0x100000c78 <__Z14store_loop_256R17SeparatedCountersILm256EEy+0x18>
+100000c64: 52800028    	mov	w8, #0x1                ; =1
+100000c68: c89ffc08    	stlr	x8, [x0]
+100000c6c: 91000508    	add	x8, x8, #0x1
+100000c70: f1000421    	subs	x1, x1, #0x1
+100000c74: 54ffffa1    	b.ne	0x100000c68 <__Z14store_loop_256R17SeparatedCountersILm256EEy+0x8>
+100000c78: d65f03c0    	ret
+
+--- slot_write_80 ---
+__Z13slot_write_80R11AlignedSlotILm8EEy
+100000c98: b4000181    	cbz	x1, 0x100000cc8 <__Z13slot_write_80R11AlignedSlotILm8EEy+0x30>
+100000c9c: d2800008    	mov	x8, #0x0                ; =0
+100000ca0: 6f00e400    	movi.2d	v0, #0000000000000000
+100000ca4: f9000008    	str	x8, [x0]
+100000ca8: 3c808000    	stur	q0, [x0, #0x8]
+100000cac: 3c818000    	stur	q0, [x0, #0x18]
+100000cb0: 3c828000    	stur	q0, [x0, #0x28]
+100000cb4: 3c838000    	stur	q0, [x0, #0x38]
+100000cb8: f804801f    	stur	xzr, [x0, #0x48]
+100000cbc: 91000508    	add	x8, x8, #0x1
+100000cc0: eb08003f    	cmp	x1, x8
+100000cc4: 54ffff01    	b.ne	0x100000ca4 <__Z13slot_write_80R11AlignedSlotILm8EEy+0xc>
+100000cc8: d65f03c0    	ret
+
+--- slot_write_128 ---
+__Z14slot_write_128R11AlignedSlotILm128EEy
+100000ccc: b4000181    	cbz	x1, 0x100000cfc <__Z14slot_write_128R11AlignedSlotILm128EEy+0x30>
+100000cd0: d2800008    	mov	x8, #0x0                ; =0
+100000cd4: 6f00e400    	movi.2d	v0, #0000000000000000
+100000cd8: f9000008    	str	x8, [x0]
+100000cdc: 3c808000    	stur	q0, [x0, #0x8]
+100000ce0: 3c818000    	stur	q0, [x0, #0x18]
+100000ce4: 3c828000    	stur	q0, [x0, #0x28]
+100000ce8: 3c838000    	stur	q0, [x0, #0x38]
+100000cec: f804801f    	stur	xzr, [x0, #0x48]
+100000cf0: 91000508    	add	x8, x8, #0x1
+100000cf4: eb08003f    	cmp	x1, x8
+100000cf8: 54ffff01    	b.ne	0x100000cd8 <__Z14slot_write_128R11AlignedSlotILm128EEy+0xc>
+100000cfc: d65f03c0    	ret
+
+--- slot_read_80 ---
+__Z12slot_read_80RK11AlignedSlotILm8EEy
+100000d00: b4000261    	cbz	x1, 0x100000d4c <__Z12slot_read_80RK11AlignedSlotILm8EEy+0x4c>
+100000d04: d10143ff    	sub	sp, sp, #0x50
+100000d08: d2800008    	mov	x8, #0x0                ; =0
+100000d0c: 910003e9    	mov	x9, sp
+100000d10: ad410400    	ldp	q0, q1, [x0, #0x20]
+100000d14: ad0107e0    	stp	q0, q1, [sp, #0x20]
+100000d18: 3dc01000    	ldr	q0, [x0, #0x40]
+100000d1c: 3d8013e0    	str	q0, [sp, #0x40]
+100000d20: ad400001    	ldp	q1, q0, [x0]
+100000d24: ad0003e1    	stp	q1, q0, [sp]
+100000d28: f94003ea    	ldr	x10, [sp]
+100000d2c: f94023eb    	ldr	x11, [sp, #0x40]
+100000d30: 8b080148    	add	x8, x10, x8
+100000d34: 8b0b0108    	add	x8, x8, x11
+100000d38: f1000421    	subs	x1, x1, #0x1
+100000d3c: 54fffea1    	b.ne	0x100000d10 <__Z12slot_read_80RK11AlignedSlotILm8EEy+0x10>
+100000d40: 910143ff    	add	sp, sp, #0x50
+100000d44: aa0803e0    	mov	x0, x8
+100000d48: d65f03c0    	ret
+100000d4c: d2800000    	mov	x0, #0x0                ; =0
+100000d50: d65f03c0    	ret
+
+--- slot_read_128 ---
+__Z13slot_read_128RK11AlignedSlotILm128EEy
+100000d54: b4000261    	cbz	x1, 0x100000da0 <__Z13slot_read_128RK11AlignedSlotILm128EEy+0x4c>
+100000d58: d10143ff    	sub	sp, sp, #0x50
+100000d5c: d2800008    	mov	x8, #0x0                ; =0
+100000d60: 910003e9    	mov	x9, sp
+100000d64: ad410400    	ldp	q0, q1, [x0, #0x20]
+100000d68: ad0107e0    	stp	q0, q1, [sp, #0x20]
+100000d6c: 3dc01000    	ldr	q0, [x0, #0x40]
+100000d70: 3d8013e0    	str	q0, [sp, #0x40]
+100000d74: ad400001    	ldp	q1, q0, [x0]
+100000d78: ad0003e1    	stp	q1, q0, [sp]
+100000d7c: f94003ea    	ldr	x10, [sp]
+100000d80: f94023eb    	ldr	x11, [sp, #0x40]
+100000d84: 8b080148    	add	x8, x10, x8
+100000d88: 8b0b0108    	add	x8, x8, x11
+100000d8c: f1000421    	subs	x1, x1, #0x1
+100000d90: 54fffea1    	b.ne	0x100000d64 <__Z13slot_read_128RK11AlignedSlotILm128EEy+0x10>
+100000d94: 910143ff    	add	sp, sp, #0x50
+100000d98: aa0803e0    	mov	x0, x8
+100000d9c: d65f03c0    	ret
+100000da0: d2800000    	mov	x0, #0x0                ; =0
+100000da4: d65f03c0    	ret
+
+--- A2b: one release store per loop iteration ---
+  store_loop_16    stlr per iteration: 1
+  store_loop_64    stlr per iteration: 1
+  store_loop_128   stlr per iteration: 1
+  store_loop_256   stlr per iteration: 1
+
+Four loops, four release stores, one each. The separations
+differ only in the layout of SeparatedCounters, so the
+instruction streams are the same work over different strides.
+
+--- A3b: the write loops cover all 80 bytes, contiguously ---
+  slot_write_80:
+    offset 0x0000  width  8  str x8, [x0]
+    offset 0x0008  width 16  stur q0, [x0, #0x8]
+    offset 0x0018  width 16  stur q0, [x0, #0x18]
+    offset 0x0028  width 16  stur q0, [x0, #0x28]
+    offset 0x0038  width 16  stur q0, [x0, #0x38]
+    offset 0x0048  width  8  stur xzr, [x0, #0x48]
+    total: 80 bytes, no gap
+  slot_write_128:
+    offset 0x0000  width  8  str x8, [x0]
+    offset 0x0008  width 16  stur q0, [x0, #0x8]
+    offset 0x0018  width 16  stur q0, [x0, #0x18]
+    offset 0x0028  width 16  stur q0, [x0, #0x28]
+    offset 0x0038  width 16  stur q0, [x0, #0x38]
+    offset 0x0048  width  8  stur xzr, [x0, #0x48]
+    total: 80 bytes, no gap
+
+--- A3b: the two arms are byte-identical ---
+  slot_write_80 and slot_write_128: 13 instructions, encodings identical
+  slot_read_80 and slot_read_128: 21 instructions, encodings identical
+
+This is stronger than 'both loops cover all 80 bytes'. The
+compiler emits one instruction stream for both arms, so the
+1.81x cannot be an instruction-selection artifact. The only
+variable is the stride the same code walks.

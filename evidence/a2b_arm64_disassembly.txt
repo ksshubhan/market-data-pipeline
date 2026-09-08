@@ -49,3 +49,16 @@
 
 --- total stlr instructions in binary (expect 4, one per loop) ---
 4
+
+
+--- Superseded, 8 September 2026 ---
+
+This file records only the four A2b store loops, reordered out of link
+order by hand, with a fragment of main pasted between two of them and no
+explanation. The same binary contains slot_write_80, slot_write_128,
+slot_read_80 and slot_read_128 - the A3b arms - and none of them appears
+here, while the README cited their disassembly as evidence for A3b. The
+file carries no provenance of any kind.
+
+Superseded by evidence/a2b_a3b_arm64_disassembly_20260908.txt. Kept
+rather than deleted, following the precedent for superseded measurements.

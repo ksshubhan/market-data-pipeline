@@ -64,3 +64,17 @@
 100000ce8: d9080008    	stlur	x8, [x0, #0x80]
 
 --- exclusive/RMW instructions (expected empty) ---
+
+
+--- Superseded, 8 September 2026 ---
+
+This file records only the cached A4 arm. The binary it was taken from
+also contains push_once_uncached and pop_once_uncached, whose four
+ordered instructions are absent here, and the section header above
+presents its four as the complete list. The file carries no commit, no
+compiler, no flags and no date, so it cannot be pinned to a revision;
+its symbols predate the memory-order and index-caching template
+parameters the current code carries.
+
+Superseded by evidence/spsc_arm64_disassembly_20260908.txt. Kept rather
+than deleted, following the precedent for superseded measurements.

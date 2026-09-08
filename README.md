@@ -237,7 +237,7 @@ Two-thread queue microbenchmark, batched timing, 10M handoffs per arm.
 | **A1b** | Acquire-release is **1.23×** faster than `seq_cst` in the real queue (33.07 vs 26.88 M handoffs/s) | No distribution overlap. Two runs five days apart agree: 1.25 and 1.23 |
 | **A1a** | Ordering cost is **not measurable** in a bare atomic ping-pong: relaxed 36.9, acq-rel 38.5, seq_cst 38.3 ns/handoff | A null result, and the explanation is the point — see below |
 | **A2b** | The coherence granule is **64 bytes** — contradicting `hw.cachelinesize` (128) and libc++'s `hardware_destructive_interference_size` (256) | Two runs three days apart agree: 3.566× and 3.596× against a shared line, with the 64/128/256 arms within 0.207% and 0.160% of each other. 64 bytes buys the whole benefit; 128 and 256 add nothing measurable |
-| **A3b** | Natural 80-byte ring slots cost **1.81×** against 128-byte padded slots | No overlap; disassembly confirms both loops cover all 80 bytes |
+| **A3b** | Natural 80-byte ring slots cost **1.81×** against 128-byte padded slots | No overlap. The two arms' loop bodies are **byte-identical** — 13 write instructions and 21 read instructions with the same encodings in the same order — so the ratio cannot be an instruction-selection artifact; the stores also cover the full 80 bytes contiguously, with no gap and nothing narrowed (`evidence/a2b_a3b_arm64_disassembly_20260908.txt`) |
 | **A4b** | Caching the opposite index saves **~10 ns/push**, 1.36× | Cached faster in 17 of 20 paired rounds at 5 MB, **20 of 20** at 80 MB, and 19 of 20 on the 7 Sep re-run at 80 MB. Medians 1.400×, 1.359× and 1.396× — the headline quotes the 80 MB figure. Quote the median, not the mean: the 5 MB run's cached arm spans 17.4 to 83.4 M ops/s around a 35.3 median, which is core placement rather than the queue, and its mean ratio reads 1.52× |
 
 **A1a's null result is more informative than a number would have been.**
@@ -246,6 +246,21 @@ round trip, so the measurement is coherence-bound rather than
 instruction-bound and the ordering cost disappears below the noise. A1b
 shows a real 1.23× because the queue pipelines across 1024 slots and has
 own-index loads that change from `ldr` to `ldar` under `seq_cst`.
+
+**A4b's mechanism is in the control flow, not the mnemonics.** Both arms
+emit the same four ordered instructions. What differs is where the
+cross-core acquire load sits. Counting instructions from the start of
+each function, it is at index 5 against a first branch at 4 in
+`push_once`, and 4 against 3 in `pop_once` — reached only once the
+producer's cached copy of the consumer index says the queue is full. In
+the uncached pair it is at index 1 against branches at 4 and 3: second
+instruction in, before any branch, paid on every call. That is a causal
+account of the 1.36× rather than an inference from it, and the indices
+are computed by the script that writes
+`evidence/spsc_arm64_disassembly_20260908.txt` rather than read off by
+eye. It also settles a related point — the uncached path is the
+*shorter* one, skipping the cache refresh and the recheck, so it loses on
+what it pays for rather than on how much work it does.
 
 **Three of the M2's cache numbers disagree**, and this project can say
 which one governs: `hw.cachelinesize` reports 128 (fetch granularity),
@@ -273,7 +288,10 @@ it is a property of one, not of the hardware.
 The producer performs an atomic *load* of the head and an atomic *store*
 of the tail. No read-modify-write, no `ldxr`/`stxr` exclusive pair, no
 `cas`. Verified from the committed disassembly
-(`evidence/spsc_arm64_disassembly.txt`), not asserted.
+(`evidence/spsc_arm64_disassembly_20260908.txt`), not asserted — and the
+sweep covers the whole binary rather than one extracted section, looking
+for `cas*`, `ld*xr`, `st*xr`, `swp*`, `ldadd*`, `ldset*`, `ldclr*` and
+`ldeor*`. It matches nothing.
 
 `std::atomic` is not buying a lock or a CAS here — a naturally-aligned
 64-bit access on ARM64 is already indivisible in hardware. What it buys is
@@ -762,6 +780,17 @@ cmake --preset default
 cmake --build --preset default
 ctest --test-dir build/default --output-on-failure
 
+# Ordered instructions, and the absence of any read-modify-write, read
+# from the built binaries. check_spsc_assembly and check_a2b_assembly
+# exist only to have their object code disassembled: they instantiate
+# the arms with noinline wrappers so the functions are emitted. The two
+# make_*_evidence.py scripts turn these dumps into the committed
+# artifacts and refuse to write if the claims do not hold.
+/opt/homebrew/opt/llvm/bin/llvm-objdump -d --demangle \
+    build/default/check_spsc_assembly > /tmp/spsc_full.txt
+/opt/homebrew/opt/llvm/bin/llvm-objdump -d \
+    build/default/check_a2b_assembly > /tmp/a2b_full.txt
+
 # Inspect the raw capture before trusting it: precision and quantity
 # maxima, message counts, leading zeros, E monotonicity, and
 # capture-clock monotonicity, in one pass
@@ -854,8 +883,17 @@ in the file, and `results/a1_memory_order_20260830_232947.txt` predates
 the header entirely, carrying a shuffle seed and nothing else. The 4
 September A1 re-run supersedes that one.
 
-**Two superseded artifacts are still committed and are not labelled in
-their own filenames.** `results/a4_index_caching_20260904_134223.txt` is
+**Four superseded artifacts are still committed.**
+`evidence/spsc_arm64_disassembly.txt` recorded only the cached A4 arm's
+four ordered instructions, omitting the uncached arm the file exists to
+demonstrate, and carried no provenance of any kind.
+`evidence/a2b_arm64_disassembly.txt` recorded only the four A2b store
+loops, reordered out of link order by hand, and omitted the four A3b slot
+functions in the same binary — whose disassembly this README cited as
+evidence while no committed file contained it. Both are superseded by the
+8 September regenerations, which carry provenance and are written by
+scripts that verify their own claims. The other two are not labelled in
+their own filenames. `results/a4_index_caching_20260904_134223.txt` is
 the consumer-bound A4 configuration, in which the cached index measures
 *slower* — 0.844×. A4b replaced it with a producer-bound arm and is the
 row quoted above; A4's result is not a contradiction, it is the reason
