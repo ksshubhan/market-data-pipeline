@@ -278,6 +278,20 @@ Binary format version covers the entire file format. Any incompatible change to 
 
 Formal A1 measurements were collected from commit `f143940271ae407e7cc9820932fbaa79660dbbae` on Apple M2 under AC power with Low Power Mode disabled. The benchmark used 10 randomized rounds per arm and 10,000,000 completed handoffs per trial.
 
+Correction, 8 Sep: these are the 30 August figures, superseded as the headline
+by the 4 September run. The formal A1 run the README quotes is
+results/a1_memory_order_qos_20260904_123814.txt, taken with QoS verified per
+thread, and it carries eight lines of provenance: commit 5b6328f, a dirty flag
+reading no, a UTC timestamp, iterations, rounds, queue capacity, shuffle seed
+and QoS class. The file this section cites carries one line, the shuffle seed.
+It records no commit, so the attribution above is an assertion about the run
+rather than something the artifact states.
+
+Recomputed from the 4 September file, the A1b medians are 33.071 and 26.875 M
+handoffs/s, a ratio of 1.2305 against this run's 1.2541. A1b's conclusion holds
+on both runs, and the README cites them together as 1.25 and 1.23. A1a's do not
+- see the second correction below.
+
 ### A1a — atomic-only
 
 Median completed-handoff throughput:
@@ -289,6 +303,15 @@ Median completed-handoff throughput:
 Relaxed and acquire/release were effectively indistinguishable by median throughput, differing by approximately 0.04%. Sequential consistency was approximately 3.0% slower than acquire/release.
 
 The atomic-only result therefore does not support a claim that acquire/release is materially faster than relaxed on this workload. It does show a small seq_cst penalty.
+
+Correction, 8 Sep: the second sentence does not survive the 4 September run.
+There, relaxed leads acquire/release by 4.23% rather than 0.04%, and seq_cst is
+0.44% faster than acquire/release rather than 3.0% slower - no penalty at all.
+The first sentence holds on both runs and is stronger on the later one. The
+README reports A1a as a null result on that basis, quoting 36.9, 38.5 and 38.3
+ns per handoff, which is the same 4 September data as time rather than rate. A
+3% penalty in one run and a 0.4% gain in the other is what a measurement at the
+noise floor looks like, and that is what the null result means.
 
 ### A1b — real 80-byte SPSC queue
 
