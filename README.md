@@ -78,7 +78,7 @@ Three configurations:
 | Configuration | What it is |
 |---|---|
 | `spsc` | The wait-free ring buffer |
-| `mutex-tuned` | Condvar queue, 8192-iteration consumer spin before blocking (§4's fair baseline) |
+| `mutex-tuned` | Condvar queue, 8192-iteration consumer spin before blocking (the fair baseline) |
 | `mutex-parking` | The same queue with a 1000-iteration spin, so it parks frequently |
 
 **Median and p99 latency, nanoseconds:**
@@ -181,7 +181,7 @@ backlog took to drain once the consumer was running again, while
 `stall length` is the worst latency inside the cluster and is a lower
 bound on how long the CPU was away. The figures quoted here are stall
 lengths. An earlier version of the script called the first column
-`stall duration`, and that name was read into the plan as a stall length
+`stall duration`, and that name was misread as a stall length
 before its own median values — 0 ns and 83 ns — made clear it could not
 be one. And the 100k runs last 20 s against the 1M runs' 2 s, so the
 100k row has ten times the exposure to rare events; that is most of why
@@ -357,8 +357,8 @@ Drop-oldest is not expressible here — the producer would have to advance
 the consumer-owned index, requiring a read-modify-write and a retry loop,
 and it would overwrite a slot the consumer may be mid-copy on. Obtaining
 drop-oldest safely needs an overwriting-ring design with consumer lap
-detection and per-slot sequence validation. That design is described in
-the plan and deliberately not built.
+detection and per-slot sequence validation. That design is deliberately
+not built.
 
 It does not contaminate any reported measurement, because **every reported
 datapoint has zero drops**.
@@ -539,8 +539,9 @@ side effect — a touch loop whose result is discarded is dead code at `-O2`
 and clang deletes it.
 
 Warming is then **verified** by comparing two full traversals. Note that
-§6.4a of the plan records a lap-1/lap-2 floor of ~1.2 for the full
-13.7M-record file, where the residual is cache warming rather than paging.
+the full 13.7M-record file has a lap-1/lap-2 floor of ~1.2 — 1.196 and
+1.222 across two runs, recorded in `NOTES.md` — where the residual is
+cache warming rather than paging.
 For the 2M-record slice used in B1 (~112 MB, far beyond the 16 MB L2) both
 laps stream from DRAM and the ratio sits near 1.0. A ratio at 1.0 there is
 correct, not a failed check.
@@ -653,8 +654,8 @@ capture-clock step wraps instead of clamping, and the wrapped gap sends
 the schedule silently *backwards* rather than forwards — a producer reads
 that as already overdue and sends immediately, destroying pacing with no
 visible symptom. `test_replay_producer` covers the rejection path, which
-had never executed before that file existed, and which is where §6.5a's
-correctness oracle gets its precondition. `test_convert_capture` drives
+had never executed before that file existed, and which is where the
+sequence oracle gets its precondition. `test_convert_capture` drives
 the converter as a child process across 898 lines, because exit statuses,
 stderr and what is left on disk do not survive being called as a
 function — and its own header records the three of the converter's ten
