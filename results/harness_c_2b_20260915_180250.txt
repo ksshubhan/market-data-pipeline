@@ -1,0 +1,14 @@
+dense_phase: passed
+logical_records: 2000000000
+pushes_completed: 2000000000
+pops_completed: 2000000000
+full_rejections: 81254628
+dropped_records: 0
+drop_phase: passed
+logical_records: 10000000
+pushes_completed: 2669305
+pops_completed: 2669305
+full_rejections: 7330695
+dropped_records: 7330695
+observed_gap_records: 7330695
+Harness C passed

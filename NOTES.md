@@ -412,6 +412,26 @@ The drop-oracle phase attempted 10,000,000 logical records. It transferred 2,689
 
 Harness C exited with status 0. No performance or latency number is reported from this correctness stress.
 
+Correction, 15 Sep: the artifact behind these figures,
+results/harness_c_2b_20260831.txt, was not the binary's output. harness_c
+prints 14 lines, all `key: value`; that file had 17. The three extra lines,
+`git_commit=`, `dense_iterations=` and `harness_c_exit=`, use a different
+separator and were added outside the binary, so the commit attribution above
+is an assertion about the run rather than something the program recorded.
+The file has been removed.
+
+The replacement run is results/harness_c_2b_20260915_180250.txt, the binary's
+output unmodified, taken at commit d799d36 with a clean tree; its environment
+dump, env/measurement_environment_20260915_180250.txt, records the commit and
+dirty flag from git. It also tests the current queue, which has changed since
+11b081e. Dense phase: 2,000,000,000 pushes and pops, 81,254,628 full-queue
+rejections, 0 dropped. Drop phase: 10,000,000 logical records, 2,669,305
+transferred, 7,330,695 abandoned, and an observed gap width of exactly
+7,330,695.
+
+The rejection counts and the drop-phase split differ from the 31 August run
+because they depend on scheduling; the invariants hold exactly on both.
+
 
 #### Harness C — AppleClang ThreadSanitizer validation
 
