@@ -498,7 +498,10 @@ Because capture timestamps are unsigned, a backwards NTP step wraps rather
 than going negative, so the replay schedule is built from **cumulative
 clamped gaps written as an explicit comparison**, not `max(0, b - a)` —
 which is a no-op on unsigned arithmetic and would convert a millisecond
-backwards step into a ~585-year forward jump.
+backwards step into a ~585-year forward jump. Neither capture contains a
+backwards step — `results/inspect_capture_btc_20260905_154358.txt` and
+`results/inspect_capture_ethw_20260905_154357.txt` both report zero — so on
+these data the clamp is a guard rather than a correction.
 
 The capture timestamp is taken *after* the Python websocket library hands
 the message up, so it carries interpreter and asyncio jitter. It is fine
@@ -589,7 +592,7 @@ path of its own send schedule. In a queue whose producer must never be
 delayed, that term dominates the one the model optimised.
 
 **What measurement showed.** Sweeping the constant directly, at 1M
-records/s:
+records/s (`results/spin_sweep_20260905_130613.csv`):
 
 | spin | parks (of 2M) | producer p99 lag |
 |---|---|---|
@@ -661,6 +664,13 @@ stderr and what is left on disk do not survive being called as a
 function — and its own header records the three of the converter's ten
 guards it cannot reach.
 
+`harness_b`'s three run-time consistency checks abort rather than warn,
+and each has been shown to fire: `evidence/harness_b_guards_20260907.txt`
+arms them one at a time with a one-line code change and records the exit.
+None has fired from a real condition, so this shows the checks are
+reachable and their diagnostics correct, not that the conditions they
+test occur on this machine.
+
 **The clean result means something because the control fires.** Running
 the deliberately-broken C1 arm in the same TSan build produces a data race
 naming `spsc_ring_buffer.hpp:130` (the payload read in `try_pop`) against
@@ -700,8 +710,13 @@ permit.
 
 **The tearing signature was predicted before the run.** From the ring
 geometry, a consumer reading a slot before the payload writes are visible
-should see a sequence of exactly `N − capacity` beside fresh price fields.
-The prediction was committed first; the observed corruption matched.
+should see two generations of that slot mixed: a sequence of exactly
+`N − capacity` beside fresh payload fields, or a fresh sequence beside
+payload fields from `N − capacity`. The prediction was committed 18 hours
+before the implementation. The run produced the second form: at capacity
+2, the consumer expected record 3 and received sequence 3 with `ask_price`
+and `bid_qty` from record 1
+(`results/c1_relaxed_publication_20260831.txt`).
 
 **Sequence oracle.** A dropping queue makes gaps legal, so "I saw a gap"
 proves nothing. Three checks: strict monotonicity (no legal drop policy
@@ -761,7 +776,9 @@ going negative; the check compares operands rather than testing the sign
 of a difference, which is the same unsigned trap the replay clamp
 documents. Minimum quantity is 0.001 on both sides with no zeros, which
 independently corroborates BTCUSDT's `stepSize` from the `exchangeInfo`
-snapshot. **No crossed or locked books in the entire capture** — bid is
+snapshot, `env/binance_futures_exchangeInfo_20260820.json`, whose fetch
+time is recorded in `env/binance_futures_exchangeInfo_20260820.fetched_at.txt`.
+**No crossed or locked books in the entire capture** — bid is
 strictly below ask on every message, which also rules out the
 case-sensitivity trap where a `tolower` in the key path silently swaps
 price and quantity.
@@ -1034,7 +1051,8 @@ filling it would need peak sustained arrival to exceed the consumer's
 drain rate. The analysis reproduces the schedule builder's arithmetic
 bit-for-bit, so this is a computed result with committed provenance rather
 than an untested assumption. Reproduce it with
-`tools/inspect_interarrival.py`.
+`tools/inspect_interarrival.py`; the committed output is
+`results/ethw_interarrival_20260905_145456.txt`.
 
 **Compressed schedules contain ties.** The schedule builder truncates each
 compressed gap to integer nanoseconds before accumulating, so any captured
