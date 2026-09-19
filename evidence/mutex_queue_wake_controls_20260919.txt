@@ -181,4 +181,68 @@ fast runs for the rest.
 
 RESULTS
 
-  (appended in a later commit)
+Run:      results/mutex_queue_controls_20260919_212628.txt, the
+          runner's raw output, committed unmodified. HEAD ee5d6a9,
+          tree clean at start and end, macOS 26.6.2 arm64. The runner
+          checked the header (md5 46399c25) and the suite (md5
+          6a91a947) before the first build, restored the header to
+          46399c25 after the last mutation, and the unmutated suite
+          passed again on the rebuild. Each fault's exact diff is in
+          that file.
+Status:   the status block at the top of this file is left as committed
+          at 29426d9, as it promised. It describes that commit. From
+          this commit on, the file holds results.
+
+Outcome against prediction: all eleven match.
+
+  BASE  exit 0 on 100 of 100
+  M1    exit 1   "FIFO order is incorrect"
+  M2    exit 1   "push 40 should succeed"
+  M3    exit 1   "full_rejections should be exactly 1"
+  M4    exit 1   "wrapped FIFO failed"
+  M5    exit 1 on 100 of 100, "parked consumer was not woken by push"
+  M6    exit 1 on 100 of 100, "parked consumer was not woken by close"
+  M7    exit 1   "parked consumer woken by close should report
+                  completion"
+  M8    exit 142 on 1 of 1
+  M9    exit 0 on 100 of 100
+  M10   exit 1   "consumer did not park before the data push"
+
+
+Stop condition
+
+  Met. M5 and M6 each exited 1 with their predicted FAIL line on 100
+  of 100 runs, the unmutated suite exited 0 on 100 of 100, and M9
+  exited 0 on 100 of 100.
+
+
+What this shows
+
+  Every property the README claims for test_mutex_queue now has a
+  mutation the suite catches: FIFO order (M1), capacity (M2),
+  rejection when full (M3), wrapped slot indices (M4), the
+  condition-variable wake (M5), and close semantics, both a parked
+  consumer woken by close (M6) and a closed, empty queue reporting
+  completion (M7). By the 19 Sep criterion, test_mutex_queue's
+  negative control is demonstrated for all six properties.
+
+  What changed is what the suite observes, not the queue.
+  src/mutex_queue.hpp is byte-identical to the 19 Sep run, md5
+  46399c25 on both.
+
+  M10 firing is a side effect. W1 cannot proceed until parks() reads
+  1, so the park counter behind the spin-sweep figures is now
+  exercised by the suite. It remains outside the README's claim.
+
+
+Limits
+
+  That the consumer is blocked when the push or close happens follows
+  from the locking, not from the count. What 100 of 100 measures is
+  narrower: on this machine and build, no spurious wakeup rescued a
+  mutated run, and no 2 s deadline expired on correct code.
+  M8 is still a hang rather than a FAIL line, as on 19 Sep.
+  M9 passing says the suite tests that a wake happens, not how often
+  notify_one is called. That the queue signals only on the empty to
+  non-empty transition is still established by reading.
+  The runner matched FAIL messages, not line numbers.

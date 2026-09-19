@@ -1,0 +1,87 @@
+test_mutex_queue negative controls — raw runner output
+Script:   tools/run_mutex_queue_controls.py
+HEAD:     ee5d6a9, tree clean at start (git status)
+Started:  20260919_212628
+Host:     macOS-26.6.2-arm64-arm-64bit-Mach-O
+Header:   src/mutex_queue.hpp md5 46399c25eb6d99fa3af544fa8777453d
+Suite:    src/test_mutex_queue.cpp md5 6a91a9473373c2f0b2deabe747bab908
+Predict:  evidence/mutex_queue_wake_controls_20260919.txt
+Timeout:  10 s per run via perl alarm; SIGALRM reported as 142
+Build:    cmake --build --preset default --target test_mutex_queue
+
+BASELINE  unmutated suite: build exit 0, runs 100
+    exit 0: 100 of 100
+
+M1  FIFO order: try_pop reads the slot after head
+    -        value = buffer_[head & kMask];
+    +        value = buffer_[(head + 1) & kMask];
+    build exit 0, runs 1
+    exit 1: 1 of 1
+    first FAIL line: FAIL: FIFO order is incorrect
+
+M2  Capacity: try_push treats the queue as full one early
+    -        if (size == Capacity) {
+    +        if (size == Capacity - 1) {
+    build exit 0, runs 1
+    exit 1: 1 of 1
+    first FAIL line: FAIL: push 40 should succeed
+
+M3  Rejection: full_rejections_ not incremented
+    -            ++full_rejections_;
+    build exit 0, runs 1
+    exit 1: 1 of 1
+    first FAIL line: FAIL: full_rejections should be exactly 1
+
+M4  Wrap: try_push writes the neighbouring slot on odd laps
+    -        buffer_[tail & kMask] = value;
+    +        buffer_[(tail & kMask) ^ ((tail / Capacity) & 1)] = value;
+    build exit 0, runs 1
+    exit 1: 1 of 1
+    first FAIL line: FAIL: wrapped FIFO failed
+
+M5  Wake: notify_one deleted from try_push
+    -            not_empty_.notify_one();
+    build exit 0, runs 100
+    exit 1: 100 of 100
+    first FAIL line: FAIL: parked consumer was not woken by push
+
+M6  Close wake: notify_one deleted from close()
+    -
+    -        not_empty_.notify_one();
+    build exit 0, runs 100
+    exit 1: 100 of 100
+    first FAIL line: FAIL: parked consumer was not woken by close
+
+M7  Close: wait_nonempty returns true when closed
+    -        return size_hint() != 0;
+    +        return size_hint() != 0 ||
+    +               closed_.load(std::memory_order_relaxed);
+    build exit 0, runs 1
+    exit 1: 1 of 1
+    first FAIL line: FAIL: parked consumer woken by close should report completion
+
+M8  Parity: try_pop waits on the condvar when empty
+    -        std::lock_guard<std::mutex> lock(mutex_);
+    +        std::unique_lock<std::mutex> lock(mutex_);
+    +        not_empty_.wait(lock, [this] { return size_hint() != 0; });
+    build exit 0, runs 1
+    exit 142: 1 of 1
+    first FAIL line: (none)
+
+M9  Transition: notify_one on every successful push
+    -        if (was_empty) {
+    -            not_empty_.notify_one();
+    -        }
+    +        not_empty_.notify_one();
+    build exit 0, runs 100
+    exit 0: 100 of 100
+    first FAIL line: (none)
+
+M10  Accounting: parks_ not incremented
+    -            ++parks_;
+    build exit 0, runs 1
+    exit 1: 1 of 1
+    first FAIL line: FAIL: consumer did not park before the data push
+
+RESTORED  header md5 verified; rebuild exit 0, run exit 0
+Tree:     clean
