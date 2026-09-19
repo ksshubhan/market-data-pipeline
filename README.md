@@ -865,9 +865,13 @@ bash env/dump_environment.sh
 #
 # src/calibrate.cpp is the exception. It rewrites
 # results/timer_calibration.csv with a fresh 1,000,000-sample timing
-# run rather than a redraw, so the clone does go dirty there. The
-# harness commands below take their dirty flag from argv. Check git
-# status before measuring, or run these last.
+# run rather than a redraw, and plot_calibration.py then redraws
+# results/timer_calibration.png from the new samples, so after both
+# commands the clone is dirty in both files. The bit-for-bit statement
+# above holds for that graph only against the committed CSV. Checked
+# 15 Sep: one run of each changed both md5s, and git checkout -- on the
+# two paths restores them. The harness commands below take their dirty
+# flag from argv. Check git status before measuring, or run these last.
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python tools/analyse_harness_b.py results/harness_b_spin8192_*.csv \
                                             results/harness_b_spin1000_*.csv
