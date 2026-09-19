@@ -1,0 +1,137 @@
+test_mutex_queue — negative controls, predictions committed 19 Sep 2026
+
+Status:   PREDICTIONS ONLY. Nothing below has been run. This file is
+          committed before any mutation is built, so every prediction
+          carries a timestamp earlier than its result. Results are
+          appended under RESULTS in a later commit; nothing above that
+          heading changes after this commit.
+
+Repo:     predictions written against b13d919.
+Suite:    src/test_mutex_queue.cpp, 194 lines, four blocks.
+Header:   src/mutex_queue.hpp, 284 lines.
+
+
+Definitions
+
+  A negative test gives bad input to correct code. A negative control
+  gives the suite's normal input to deliberately broken code, to show
+  the suite can fail. This file is about controls. test_capture_file's
+  corrupt-one-field cases are negative tests and do not count as
+  controls.
+
+  Criterion: a suite has a demonstrated negative control when every
+  property its README entry claims has at least one mutation that makes
+  the suite exit non-zero with the predicted FAIL message.
+  Deterministic mutations are run once. Scheduling-dependent mutations
+  are run N times, N fixed below, and reported as a fire count.
+
+  Every mutation stays defined behaviour. An out-of-bounds index into
+  std::array is undefined, so whether the suite catches it is not a
+  measurement. This is the same reason the relaxed queue was removed
+  from A1.
+
+
+Decisions, closed by this commit
+
+  Scope:    test_mutex_queue only. test_spsc_ring_buffer and
+            test_capture_file get their own row, with this criterion
+            and not reopened here.
+  N:        100 runs for each scheduling-dependent mutation.
+  Timeout:  10 s per run, applied outside ctest, because CMakeLists.txt
+            sets no TIMEOUT and a hang under ctest is not a failure.
+            The suite normally finishes in milliseconds.
+  Exits:    0 = pass, 1 = FAIL line printed, 142 = killed by the
+            timeout (SIGALRM, 128 + 14).
+  Build:    cmake --build --preset default, exit 0 verified before every
+            run. No result is read after a failed build.
+  Fallback: if M5 or M6 does not fire, this row closes on the evidence
+            alone, and "the wake test does not force a park" becomes a
+            separately tracked item. Its stop condition is M5 and M6
+            firing on N of N runs.
+
+
+Properties claimed by the README (line 646): FIFO order, capacity,
+rejection when full, wrapped slot indices, the condition-variable wake,
+close semantics.
+
+
+M1  FIFO order
+    Fault:      try_pop reads the slot after head instead of head,
+                still masked, so still in bounds.
+    Predicted:  exit 1, "FIFO order is incorrect" (block 1, line 72).
+
+M2  Capacity
+    Fault:      try_push treats the queue as full one element early.
+    Predicted:  exit 1, "push 40 should succeed" (block 1, line 49).
+
+M3  Rejection when full
+    Fault:      the rejection path returns false without incrementing
+                full_rejections_.
+    Predicted:  exit 1, "full_rejections should be exactly 1"
+                (block 1, line 61).
+
+M4  Wrapped slot indices
+    Fault:      in try_push only, on odd laps (tail / Capacity odd),
+                write to the neighbouring slot (index XOR 1). try_pop is
+                untouched. Lap 0 is unaffected, so every earlier check
+                is undisturbed. The XOR keeps the index below Capacity,
+                so the mutation is in bounds.
+    Predicted:  exit 1, "wrapped FIFO failed" (block 1, line 90). Push 60
+                lands in slot 1, push 70 in slot 0, and the pop at head
+                4 reads slot 0 and returns 70.
+    Note:       the 19 Sep review first said no isolated wrap mutation
+                existed. That was wrong. A mutation that is symmetric
+                between push and pop preserves FIFO, so it can never
+                fire; a push-only one can.
+
+M5  Condition-variable wake
+    Fault:      delete the notify_one() in try_push.
+    Runs:       N = 100.
+    Predicted:  at most 5 of 100 runs exit 142, the rest exit 0.
+                Reasoning: block 2 pushes on the line after the thread
+                constructor returns. The consumer must then start, spin
+                8192 iterations (~10 us) and take the lock before that
+                push, or it never parks. If this prediction holds, the
+                README's "condition-variable wake" claim is not tested
+                by this suite.
+
+M6  Close semantics: close() wakes a parked consumer
+    Fault:      delete the notify_one() in close().
+    Runs:       N = 100.
+    Predicted:  at most 5 of 100 runs exit 142, the rest exit 0. Same
+                reasoning as M5, applied to block 3.
+
+M7  Close semantics: closed and empty reports completion
+    Fault:      wait_nonempty returns true when the queue is closed,
+                whether or not it holds data.
+    Predicted:  exit 1, "wait_nonempty should return false when closed
+                and empty" (block 3, line 143). Block 4 would also fail,
+                but block 3 returns first.
+
+
+Outside the README's claim. These are recorded as findings and do not
+count against the criterion.
+
+M8  try_pop never blocks (interface parity with the SPSC arm)
+    Fault:      try_pop waits on the condition variable when empty.
+    Predicted:  exit 142 on a single run. The first check (line 29) pops
+                an empty queue on the only thread, so the wait never
+                returns. A hang, not a FAIL.
+
+M9  Signal only on the empty -> non-empty transition
+    Fault:      try_push calls notify_one on every successful push.
+    Predicted:  exit 0. signals_ is incremented in the first
+                if (was_empty) and the notify is in a separate second
+                one, so signals() counts the branch, not the notify.
+                Nothing in the suite observes the notify.
+
+M10 parks_ accounting (spin-sweep figures)
+    Fault:      wait_nonempty does not increment parks_.
+    Predicted:  exit 0. No check reads parks(). The spin-sweep table's
+                park counts rest on this counter.
+
+
+RESULTS
+
+(Appended in a later commit. Each entry gives: the fault as a diff,
+build exit status, exit code or fire count, and the first FAIL line.)
