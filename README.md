@@ -646,7 +646,18 @@ both cached and uncached, because A4's uncached arm has to behave
 identically. `test_mutex_queue` covers the baseline: FIFO order, capacity,
 rejection when full, wrapped slot indices, the condition-variable wake and
 close semantics — a broken baseline would flatter the headline result, so
-it is tested rather than assumed. `test_capture_file` covers the dataset
+it is tested rather than assumed. Each of those six properties has a
+deliberate fault that makes the suite fail with a predicted message, and
+the predictions were committed before any fault was built. The first
+round, `evidence/mutex_queue_controls_20260919.txt` with the runner's raw
+output in `results/mutex_queue_controls_20260919_173756.txt`, caught five
+of the six: with either `notify_one()` deleted the suite still passed 100
+of 100 runs, because in those runs the consumer did not park before the
+push or close reached it. The suite now polls `parks()` until the consumer
+is blocked in `wait()` before it pushes or closes, and the second round,
+`evidence/mutex_queue_wake_controls_20260919.txt` with
+`results/mutex_queue_controls_20260919_212628.txt`, catches all six, each
+wake fault on 100 of 100 runs. `test_capture_file` covers the dataset
 reader by building a valid ten-record file in memory, corrupting exactly
 one field per case and asserting the specific error comes back; a
 validator tested only against good input tests nothing.
@@ -805,6 +816,16 @@ Requires Homebrew LLVM (not Apple Clang), CMake, and a Binance capture.
 cmake --preset default
 cmake --build --preset default
 ctest --test-dir build/default --output-on-failure
+
+# Negative controls for test_mutex_queue. Ten deliberate faults in
+# src/mutex_queue.hpp, each built and run against the suite, with the
+# header restored byte-for-byte after each. Refuses to start on a dirty
+# tree. 201 of its runs wait out a 2 s deadline, so it takes several
+# minutes. Writes results/mutex_queue_controls_*.txt. It runs the
+# predictions in evidence/mutex_queue_wake_controls_20260919.txt; the
+# earlier round was run by the earlier version of this script, whose
+# commit is the HEAD line in that round's results file.
+python3 tools/run_mutex_queue_controls.py
 
 # Ordered instructions, and the absence of any read-modify-write, read
 # from the built binaries. check_spsc_assembly and check_a2b_assembly
