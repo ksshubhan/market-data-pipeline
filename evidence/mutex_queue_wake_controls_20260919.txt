@@ -1,0 +1,184 @@
+test_mutex_queue — forced-park wake controls, predictions committed 19 Sep 2026
+
+Status:   PREDICTIONS ONLY. Nothing below has been run, and the test
+          blocks it describes are not yet written. This file is
+          committed before either, so every prediction carries a
+          timestamp earlier than the code it predicts and the result.
+          Results are appended under RESULTS in a later commit; nothing
+          above that heading changes after this commit.
+
+Repo:     predictions written against 07805c7.
+Suite:    src/test_mutex_queue.cpp at 07805c7, md5 29e22982, 194 lines
+          by wc -l (no trailing newline; grep -c '' gives 195).
+Header:   src/mutex_queue.hpp, md5 46399c25, 284 lines. Not changed by
+          this work; every mutation anchor below is the one committed
+          at 36fdfaa.
+Runner:   tools/run_mutex_queue_controls.py at 07805c7, md5 4e0e3e47.
+
+Follows:  evidence/mutex_queue_controls_20260919.txt, which closed its
+          row on five of six properties and fixed this item's stop
+          condition in its Fallback line: M5 and M6 firing on N of N
+          runs. That file is not edited by this work.
+
+
+Why the 19 Sep suite cannot see a wake
+
+  Blocks 2 and 3 start a consumer and push or close on the next line.
+  The consumer has to start, spin 8192 iterations and take the lock
+  before that, or it never parks, and in 200 runs it never did. A
+  deleted notify_one is only observable if the consumer is already
+  blocked in wait() when the push or close happens. The suite has to
+  establish that, not hope for it.
+
+
+How the new blocks establish it
+
+  wait_nonempty() increments parks_ under the mutex and calls
+  not_empty_.wait(lock, pred) in the same critical section. parks()
+  takes the same mutex. So a test thread can only read parks() >= 1
+  after the consumer has released the lock, and after the increment
+  the only place it releases the lock is inside wait(), which releases
+  and blocks as one atomic step. A spurious wakeup reacquires the lock,
+  finds the predicate false and waits again. From the moment the test
+  thread reads parks() >= 1, the consumer is in wait() until something
+  notifies it. That is a property of the locking, not of timing.
+
+
+Decisions, closed by this commit
+
+  Blocks:   two new blocks, inserted after block 1 and before the
+            existing blocks 2, 3 and 4, which are kept unchanged.
+            W1 forces a park and pushes. W2 forces a park and closes.
+            Placing them first means a failing wake exits the suite
+            before block 2 or 3 is reached, so a rare park inside the
+            old racy blocks cannot turn a FAIL into a hang.
+  Park:     the test thread polls parks() every 1 ms until it reads
+            >= 1, with a 2 s deadline.
+  Wake:     the consumer reports wait_nonempty()'s return value through
+            a std::promise<bool>; the test thread waits on the future
+            with a 2 s deadline.
+  Margin:   park/wake measures ~1.3 us and the consumer's spin ~10 us.
+            2 s is at least five orders of magnitude over both, to
+            absorb scheduler preemption on a loaded laptop. The
+            evidence that it is enough is the unmutated suite passing
+            N of N below.
+  Timeout:  the runner's 10 s per-run limit is unchanged. A failing
+            run exits at its first 2 s deadline, well inside it.
+  Exit:     a failure while the consumer may still be blocked prints
+            its FAIL line through the existing check() and calls
+            std::_Exit(1). The consumer cannot be joined (that hangs),
+            a joinable std::thread cannot be destroyed (that calls
+            std::terminate, exit 134 rather than 1), and it cannot be
+            rescued by close() because M6 deletes that notify. _Exit
+            skips destructors deliberately, on the failure path only.
+            check() writes to std::cerr, which is unit-buffered, so
+            the FAIL line is out before _Exit runs; no explicit flush
+            is needed, and none is added.
+  Runner:   edited in place. The results file records HEAD, which pins
+            the runner version, so the 19 Sep record stays traceable to
+            the runner at 36fdfaa. Changes: PREDICTIONS points at this
+            file; the test source is md5-pinned alongside the header;
+            the unmutated baseline runs N times and every run must exit
+            0; M9 runs N times. All ten mutations keep their
+            anchors.
+  N:        100, unchanged from 19 Sep.
+  Newline:  the edited suite ends with a newline, so wc -l and
+            grep -c '' agree from that commit on.
+
+  FAIL messages, all distinct from every existing message, so the
+  runner's first-FAIL-line match identifies the check:
+
+    W1  "consumer did not park before the data push"
+        "push into queue with parked consumer failed"
+        "parked consumer was not woken by push"
+        "parked consumer woken by push should report data"
+    W2  "consumer did not park before close"
+        "parked consumer was not woken by close"
+        "parked consumer woken by close should report completion"
+
+
+Stop condition
+
+  Carried from the 19 Sep Fallback line and not relaxed: M5 and M6
+  each exit 1 with their predicted FAIL line on 100 of 100 runs. Two
+  preconditions make that result interpretable: the unmutated suite
+  exits 0 on 100 of 100, which shows the deadlines produce no false
+  FAIL, and M9 exits 0 on 100 of 100, which shows the new blocks test
+  that a wake happens and not how often notify_one is called.
+
+  If any M5 or M6 run exits 0, the stop condition is not met and the
+  row stays open with the count recorded. The one known way that can
+  happen is a spurious wakeup after the push, which finds data and
+  returns; a spurious wakeup after close() finds closed_ set and
+  returns the same way. That possibility is why N of N is a claim
+  about this machine and not a proof. It is not grounds to lower the
+  bar after the run.
+
+
+Predictions
+
+  Deterministic mutations are run once, as on 19 Sep.
+
+  BASE  unmutated suite
+        Runs 100. Predicted: exit 0 on 100 of 100.
+
+  M1    FIFO order
+        Predicted: exit 1, "FIFO order is incorrect". Block 1 runs
+        first and is unchanged.
+
+  M2    Capacity
+        Predicted: exit 1, "push 40 should succeed". Block 1.
+
+  M3    Rejection when full
+        Predicted: exit 1, "full_rejections should be exactly 1".
+        Block 1.
+
+  M4    Wrapped slot indices
+        Predicted: exit 1, "wrapped FIFO failed". Block 1.
+
+  M5    notify_one deleted from try_push
+        Runs 100. Predicted: exit 1 on 100 of 100, "parked consumer
+        was not woken by push". W1: the park is confirmed, the push
+        succeeds without notifying, and the 2 s wake deadline expires.
+        This is the change from 19 Sep, where M5 exited 0 on 100 of
+        100.
+
+  M6    notify_one deleted from close()
+        Runs 100. Predicted: exit 1 on 100 of 100, "parked consumer
+        was not woken by close". W1 passes, since try_push still
+        notifies; W2's wake deadline expires. Changed from exit 0 on
+        100 of 100.
+
+  M7    wait_nonempty returns true when closed
+        Predicted: exit 1, "parked consumer woken by close should
+        report completion". W2 now runs before block 3, so the FAIL
+        line moves from block 3's message to W2's. W1 is unaffected:
+        it is never closed and holds data, so the mutated return is
+        true either way.
+
+  M8    try_pop waits on the condvar when empty
+        Predicted: exit 142 on 1 of 1. Unchanged: block 1's first
+        check hangs before any new block runs. Outside the README's
+        claim, as on 19 Sep.
+
+  M9    notify_one on every successful push
+        Runs 100. Predicted: exit 0 on 100 of 100. W1 pushes once
+        into an empty queue, so every-push and transition-only notify
+        behave identically there. Outside the README's claim.
+
+  M10   parks_ not incremented
+        Predicted: exit 1, "consumer did not park before the data
+        push". W1's park poll never reads >= 1 and its 2 s deadline
+        expires. Changed from exit 0 on 19 Sep: the new blocks make
+        the park counter observable as a side effect. Outside the
+        README's claim, which says nothing about parks().
+
+
+Run time, estimated from the deadlines and not measured: about 2 s for
+each of M5, M6 and M10's 201 failing runs, so roughly 7 minutes, plus
+fast runs for the rest.
+
+
+RESULTS
+
+  (appended in a later commit)
