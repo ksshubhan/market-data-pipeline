@@ -1,0 +1,155 @@
+interference_probe -mcpu sweep, GCC on aarch64 — raw output
+
+Script:   tools/mcpu_sweep.py
+Repo:     39f6a58, tree clean at start (git status)
+Run:      20260919_181022 (guest clock)
+Guest:    Ubuntu 25.10, aarch64
+Kernel:   6.17.0-5-generic
+Compiler: g++ (Ubuntu 15.2.0-4ubuntu4) 15.2.0
+Probe:    tools/interference_probe.cpp
+
+Why this file exists: the sweep was first run on 7 Sep 2026 and
+its figures were recorded only as prose. This is a re-run whose
+output is committed unmodified. Each value is compared with the
+table recorded on 7 Sep under GCC 15.2.0.
+
+=== -mcpu (none)
+Command:  g++ -std=c++20 -Wall -Wextra -o /tmp/ip_sweep_default tools/interference_probe.cpp
+Build:    exit 0
+Stderr:   (empty)
+Run:      exit 0
+  probe: interference constants
+  compiler: gcc 15.2.0
+  library: libstdc++ __GLIBCXX__ 20250917 _GLIBCXX_RELEASE 15
+  target: aarch64
+  hardware_destructive_interference_size: 256
+  hardware_constructive_interference_size: 64
+  __GCC_DESTRUCTIVE_SIZE: 256
+  macro agrees with <new>: yes
+  __GCC_CONSTRUCTIVE_SIZE: 64
+
+=== -mcpu generic
+Command:  g++ -std=c++20 -Wall -Wextra -mcpu=generic -o /tmp/ip_sweep_generic tools/interference_probe.cpp
+Build:    exit 0
+Stderr:   (empty)
+Run:      exit 0
+  probe: interference constants
+  compiler: gcc 15.2.0
+  library: libstdc++ __GLIBCXX__ 20250917 _GLIBCXX_RELEASE 15
+  target: aarch64
+  hardware_destructive_interference_size: 256
+  hardware_constructive_interference_size: 64
+  __GCC_DESTRUCTIVE_SIZE: 256
+  macro agrees with <new>: yes
+  __GCC_CONSTRUCTIVE_SIZE: 64
+
+=== -mcpu apple-m1
+Command:  g++ -std=c++20 -Wall -Wextra -mcpu=apple-m1 -o /tmp/ip_sweep_apple-m1 tools/interference_probe.cpp
+Build:    exit 0
+Stderr:   (empty)
+Run:      exit 0
+  probe: interference constants
+  compiler: gcc 15.2.0
+  library: libstdc++ __GLIBCXX__ 20250917 _GLIBCXX_RELEASE 15
+  target: aarch64
+  hardware_destructive_interference_size: 256
+  hardware_constructive_interference_size: 64
+  __GCC_DESTRUCTIVE_SIZE: 256
+  macro agrees with <new>: yes
+  __GCC_CONSTRUCTIVE_SIZE: 64
+
+=== -mcpu neoverse-n1
+Command:  g++ -std=c++20 -Wall -Wextra -mcpu=neoverse-n1 -o /tmp/ip_sweep_neoverse-n1 tools/interference_probe.cpp
+Build:    exit 0
+Stderr:   (empty)
+Run:      exit 0
+  probe: interference constants
+  compiler: gcc 15.2.0
+  library: libstdc++ __GLIBCXX__ 20250917 _GLIBCXX_RELEASE 15
+  target: aarch64
+  hardware_destructive_interference_size: 64
+  hardware_constructive_interference_size: 64
+  __GCC_DESTRUCTIVE_SIZE: 64
+  macro agrees with <new>: yes
+  __GCC_CONSTRUCTIVE_SIZE: 64
+
+=== -mcpu neoverse-v1
+Command:  g++ -std=c++20 -Wall -Wextra -mcpu=neoverse-v1 -o /tmp/ip_sweep_neoverse-v1 tools/interference_probe.cpp
+Build:    exit 0
+Stderr:   (empty)
+Run:      exit 0
+  probe: interference constants
+  compiler: gcc 15.2.0
+  library: libstdc++ __GLIBCXX__ 20250917 _GLIBCXX_RELEASE 15
+  target: aarch64
+  hardware_destructive_interference_size: 64
+  hardware_constructive_interference_size: 64
+  __GCC_DESTRUCTIVE_SIZE: 64
+  macro agrees with <new>: yes
+  __GCC_CONSTRUCTIVE_SIZE: 64
+
+=== -mcpu neoverse-v2
+Command:  g++ -std=c++20 -Wall -Wextra -mcpu=neoverse-v2 -o /tmp/ip_sweep_neoverse-v2 tools/interference_probe.cpp
+Build:    exit 0
+Stderr:   (empty)
+Run:      exit 0
+  probe: interference constants
+  compiler: gcc 15.2.0
+  library: libstdc++ __GLIBCXX__ 20250917 _GLIBCXX_RELEASE 15
+  target: aarch64
+  hardware_destructive_interference_size: 64
+  hardware_constructive_interference_size: 64
+  __GCC_DESTRUCTIVE_SIZE: 64
+  macro agrees with <new>: yes
+  __GCC_CONSTRUCTIVE_SIZE: 64
+
+=== -mcpu cortex-a76
+Command:  g++ -std=c++20 -Wall -Wextra -mcpu=cortex-a76 -o /tmp/ip_sweep_cortex-a76 tools/interference_probe.cpp
+Build:    exit 0
+Stderr:   (empty)
+Run:      exit 0
+  probe: interference constants
+  compiler: gcc 15.2.0
+  library: libstdc++ __GLIBCXX__ 20250917 _GLIBCXX_RELEASE 15
+  target: aarch64
+  hardware_destructive_interference_size: 64
+  hardware_constructive_interference_size: 64
+  __GCC_DESTRUCTIVE_SIZE: 64
+  macro agrees with <new>: yes
+  __GCC_CONSTRUCTIVE_SIZE: 64
+
+=== -mcpu cortex-x3
+Command:  g++ -std=c++20 -Wall -Wextra -mcpu=cortex-x3 -o /tmp/ip_sweep_cortex-x3 tools/interference_probe.cpp
+Build:    exit 0
+Stderr:   (empty)
+Run:      exit 0
+  probe: interference constants
+  compiler: gcc 15.2.0
+  library: libstdc++ __GLIBCXX__ 20250917 _GLIBCXX_RELEASE 15
+  target: aarch64
+  hardware_destructive_interference_size: 64
+  hardware_constructive_interference_size: 64
+  __GCC_DESTRUCTIVE_SIZE: 64
+  macro agrees with <new>: yes
+  __GCC_CONSTRUCTIVE_SIZE: 64
+
+=== -Q --help=target with -mcpu=apple-m1
+Command:  g++ -mcpu=apple-m1 -Q --help=target
+Exit:     0
+Lines:    only -mcpu= and -mtune=, runs of whitespace collapsed
+  -mcpu= apple-m1
+  -mtune=
+
+=== Summary
+  -mcpu           destructive   7 Sep   matches
+  (none)          256           256     yes
+  generic         256           256     yes
+  apple-m1        256           256     yes
+  neoverse-n1     64            64      yes
+  neoverse-v1     64            64      yes
+  neoverse-v2     64            64      yes
+  cortex-a76      64            64      yes
+  cortex-x3       64            64      yes
+
+Build or run failures: 0
+Differences from 7 Sep: 0

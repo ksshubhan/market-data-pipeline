@@ -1041,7 +1041,10 @@ of not telling the toolchain what it is building for. libc++ has no tuning
 notion at all and reports 256 flat, so it cannot participate in the
 distinction. Measured in an Ubuntu 25.10 aarch64 guest under UTM;
 `evidence/interference_libstdcxx_gcc15_aarch64.txt`, probe at
-`tools/interference_probe.cpp`.
+`tools/interference_probe.cpp`. The eight-arm `-mcpu` sweep above is
+`evidence/mcpu_sweep_gcc_aarch64_20260919.txt`, produced by
+`tools/mcpu_sweep.py`, which also records what `-Q --help=target`
+reports for `-mcpu=apple-m1`.
 
 **B2 is closed as an analysis result rather than a measurement.** The
 compression factor is 38,791, giving 100k msg/s mean offered load from the
