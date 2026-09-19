@@ -133,5 +133,56 @@ M10 parks_ accounting (spin-sweep figures)
 
 RESULTS
 
-(Appended in a later commit. Each entry gives: the fault as a diff,
-build exit status, exit code or fire count, and the first FAIL line.)
+Run:      results/mutex_queue_controls_20260919_173756.txt, the
+          runner's raw output, committed unmodified. HEAD 36fdfaa, tree
+          clean at start and end, macOS 26.6.2 arm64. The unmutated
+          suite passed before the first mutation and after the last,
+          and the header was restored to md5 46399c25. Each fault's
+          exact diff is in that file.
+Status:   the status block at the top of this file is left as committed
+          at 36fdfaa, as it promised. It describes that commit. From
+          this commit on, the file holds results.
+
+Outcome against prediction: all ten match.
+
+  M1   exit 1   "FIFO order is incorrect"
+  M2   exit 1   "push 40 should succeed"
+  M3   exit 1   "full_rejections should be exactly 1"
+  M4   exit 1   "wrapped FIFO failed"
+  M5   exit 0 on 100 of 100 runs, no hang
+  M6   exit 0 on 100 of 100 runs, no hang
+  M7   exit 1   "wait_nonempty should return false when closed and
+                empty"
+  M8   exit 142 on 1 of 1 run
+  M9   exit 0
+  M10  exit 0
+
+What this shows
+
+  Five of the six properties the README claims have a mutation the
+  suite catches: FIFO order, capacity, rejection when full, wrapped
+  slot indices, and close reporting completion when closed and empty.
+
+  The sixth does not. With either notify_one deleted, the suite passed
+  all 200 runs. The consumer never parked before the push or the close
+  reached it, so neither wake path ran. The README's statement that
+  this suite covers the condition-variable wake is not supported, and
+  by the criterion above test_mutex_queue's negative control is
+  demonstrated for five of its six claimed properties, not all six.
+
+Limits
+
+  0 of 100 is an observed count on this machine and build. It bounds
+  how often the consumer parks first; it does not show that it cannot.
+  The runner matched FAIL messages, not line numbers. The line numbers
+  in the predictions, and M8's hang being at the first try_pop, come
+  from reading the source.
+  M9 and M10 passing say what the suite does not observe. They say
+  nothing against the queue itself, which, by reading, signals only on
+  the empty to non-empty transition and counts parks.
+
+Consequence
+
+  As fixed by the fallback above, this row closes on this evidence, and
+  "the wake test does not force a park" becomes a separately tracked
+  item.
