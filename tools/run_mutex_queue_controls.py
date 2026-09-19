@@ -11,7 +11,11 @@ It refuses to start unless:
   - the predictions file is committed (so every prediction predates
     its result),
   - src/mutex_queue.hpp matches the md5 the mutations were written for,
-  - the unmutated suite builds and passes (positive control).
+  - src/test_mutex_queue.cpp matches the md5 the predictions were
+    written for,
+  - the unmutated suite builds and passes on every one of N runs
+    (positive control, and the evidence that the suite's deadlines
+    produce no false FAIL).
 
 It writes its full output, unmodified, to results/ and to stdout.
 Nothing is read from a run whose build failed.
@@ -25,7 +29,9 @@ import sys
 
 HEADER = "src/mutex_queue.hpp"
 HEADER_MD5 = "46399c25eb6d99fa3af544fa8777453d"
-PREDICTIONS = "evidence/mutex_queue_controls_20260919.txt"
+TEST = "src/test_mutex_queue.cpp"
+TEST_MD5 = "6a91a9473373c2f0b2deabe747bab908"
+PREDICTIONS = "evidence/mutex_queue_wake_controls_20260919.txt"
 BINARY = "./build/default/test_mutex_queue"
 BUILD = ["cmake", "--build", "--preset", "default",
          "--target", "test_mutex_queue"]
@@ -72,7 +78,7 @@ MUTATIONS = [
      "        not_empty_.wait(lock, [this] { return size_hint() != 0; });\n\n"
      "        const std::uint64_t head = head_.load"),
 
-    ("M9", "Transition: notify_one on every successful push", 1,
+    ("M9", "Transition: notify_one on every successful push", N_SCHED,
      "        if (was_empty) {\n            not_empty_.notify_one();\n"
      "        }\n",
      "        not_empty_.notify_one();\n"),
@@ -141,6 +147,10 @@ def main():
         original = f.read()
     if md5(original) != HEADER_MD5:
         refuse(HEADER + " md5 " + md5(original) + ", expected " + HEADER_MD5)
+    with open(TEST, "rb") as f:
+        test_md5 = md5(f.read())
+    if test_md5 != TEST_MD5:
+        refuse(TEST + " md5 " + test_md5 + ", expected " + TEST_MD5)
 
     text = original.decode("utf-8")
     for tag, _, _, old, _ in MUTATIONS:
@@ -158,6 +168,8 @@ def main():
     emit("Started:  " + stamp)
     emit("Host:     " + platform.platform())
     emit("Header:   " + HEADER + " md5 " + HEADER_MD5)
+    emit("Suite:    " + TEST + " md5 " + TEST_MD5)
+    emit("Predict:  " + PREDICTIONS)
     emit("Timeout:  " + str(TIMEOUT_S) + " s per run via perl alarm; "
          "SIGALRM reported as " + str(SIGALRM_EXIT))
     emit("Build:    " + " ".join(BUILD))
@@ -166,11 +178,20 @@ def main():
     code, log = build()
     if code != 0:
         refuse("baseline build failed:\n" + "\n".join(log[-20:]))
-    base_code, base_fail = run_once()
-    emit("BASELINE  unmutated suite: build exit 0, run exit "
-         + str(base_code))
-    if base_code != 0:
-        refuse("unmutated suite does not pass: " + base_fail)
+    base_tally = {}
+    base_fail = ""
+    for _ in range(N_SCHED):
+        rc, fl = run_once()
+        base_tally[rc] = base_tally.get(rc, 0) + 1
+        if fl and not base_fail:
+            base_fail = fl
+    emit("BASELINE  unmutated suite: build exit 0, runs " + str(N_SCHED))
+    for rc in sorted(base_tally):
+        emit("    exit " + str(rc) + ": " + str(base_tally[rc])
+             + " of " + str(N_SCHED))
+    if base_tally.get(0, 0) != N_SCHED:
+        refuse("unmutated suite does not pass every run: "
+               + (base_fail if base_fail else "(no FAIL line)"))
     emit()
 
     try:

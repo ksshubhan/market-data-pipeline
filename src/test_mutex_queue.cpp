@@ -1,6 +1,9 @@
 #include "mutex_queue.hpp"
 
+#include <chrono>
 #include <cstdint>
+#include <cstdlib>
+#include <future>
 #include <iostream>
 #include <thread>
 
@@ -15,6 +18,50 @@ bool check(bool condition, const char* message)
     }
 
     return true;
+}
+
+
+using WakeQueue = MutexQueue<std::uint64_t, 4>;
+
+// A fifth of the runner's 10 s per-run limit, so a failing run exits on
+// its own FAIL line rather than the runner's timeout, and at least five
+// orders of magnitude above the ~10 us spin and ~1.3 us park/wake it has
+// to cover. That margin is a judgement; the controls runner's 100-run
+// unmutated baseline is the evidence that it produces no false FAIL.
+constexpr auto kDeadline = std::chrono::seconds(2);
+
+
+// Returns once the consumer is blocked in wait(), or false at the
+// deadline. wait_nonempty() increments parks_ under the mutex in the same
+// critical section as its wait() call, and parks() takes that mutex, so
+// reading 1 means the consumer has released the lock inside wait() --
+// which releases and blocks as one step -- and stays there until
+// notified. A spurious wakeup finds the predicate false and waits again.
+bool wait_for_park(const WakeQueue& queue)
+{
+    const auto deadline = std::chrono::steady_clock::now() + kDeadline;
+
+    while (queue.parks() < 1) {
+        if (std::chrono::steady_clock::now() >= deadline) {
+            return false;
+        }
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+
+    return true;
+}
+
+
+// For failures while the consumer may still be blocked. It cannot be
+// joined (that hangs), destroyed while joinable (std::terminate, exit
+// 134), or rescued by close() when close()'s notify is what is under
+// test. check() writes to std::cerr, which is unit-buffered, so the FAIL
+// line is out before _Exit skips the destructors.
+[[noreturn]] void fail_with_blocked_consumer(const char* message)
+{
+    check(false, message);
+    std::_Exit(1);
 }
 
 } // namespace
@@ -92,6 +139,82 @@ int main()
         }
 
         if (!check(queue.try_pop(value) && value == 70, "wrapped FIFO failed")) {
+            return 1;
+        }
+    }
+
+    // W1: the consumer is confirmed blocked before the push, so the push
+    // is the only thing that can wake it. The blocks after W2 push or
+    // close immediately; their consumer parked first in 0 of 200 runs on
+    // 19 Sep, so a deleted notify_one passes them. These two exist so
+    // that it cannot.
+    {
+        WakeQueue queue;
+
+        std::promise<bool> woke;
+        std::future<bool> woke_result = woke.get_future();
+
+        std::thread consumer([&queue, &woke] {
+            woke.set_value(queue.wait_nonempty());
+        });
+
+        if (!wait_for_park(queue)) {
+            fail_with_blocked_consumer(
+                "consumer did not park before the data push"
+            );
+        }
+
+        if (!queue.try_push(456)) {
+            fail_with_blocked_consumer(
+                "push into queue with parked consumer failed"
+            );
+        }
+
+        if (woke_result.wait_for(kDeadline) != std::future_status::ready) {
+            fail_with_blocked_consumer(
+                "parked consumer was not woken by push"
+            );
+        }
+
+        consumer.join();
+
+        if (!check(
+                woke_result.get(),
+                "parked consumer woken by push should report data"
+            )) {
+            return 1;
+        }
+    }
+
+    // W2: as W1, with close() as the only thing that can wake it.
+    {
+        WakeQueue queue;
+
+        std::promise<bool> woke;
+        std::future<bool> woke_result = woke.get_future();
+
+        std::thread consumer([&queue, &woke] {
+            woke.set_value(queue.wait_nonempty());
+        });
+
+        if (!wait_for_park(queue)) {
+            fail_with_blocked_consumer("consumer did not park before close");
+        }
+
+        queue.close();
+
+        if (woke_result.wait_for(kDeadline) != std::future_status::ready) {
+            fail_with_blocked_consumer(
+                "parked consumer was not woken by close"
+            );
+        }
+
+        consumer.join();
+
+        if (!check(
+                !woke_result.get(),
+                "parked consumer woken by close should report completion"
+            )) {
             return 1;
         }
     }
