@@ -1,0 +1,70 @@
+GCC 15 ThreadSanitizer dies on a blocking condition_variable wait
+aarch64 Linux, Ubuntu 25.10 guest
+
+date_utc: 2026-09-20 00:47:19
+guest:    Ubuntu 25.10 aarch64, live session under UTM
+kernel:   6.17.0-5-generic
+repo:     b6eb17d, porcelain lines: 0
+compiler: g++ (Ubuntu 15.2.0-4ubuntu4) 15.2.0
+build:    cmake -G Ninja -DCMAKE_CXX_COMPILER=g++
+          -DCMAKE_CXX_FLAGS="-O1 -g -Wall -Wextra -fsanitize=thread"
+          -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=thread"
+          built by target: the seven suites and c1_relaxed_publication.
+          calibrate.cpp includes mach/mach_time.h unguarded and cannot
+          compile on Linux, so a full build stops before any binary.
+
+1. ctest, GCC TSan build
+1/7 Test #1: parser ...........................   Passed    0.03 sec
+2/7 Test #2: mutex_queue ......................***Exception: Illegal  0.01 sec
+3/7 Test #3: spsc_ring_buffer .................   Passed    0.39 sec
+4/7 Test #4: capture_file .....................   Passed    0.01 sec
+5/7 Test #5: replay_schedule ..................   Passed    0.09 sec
+6/7 Test #6: replay_producer ..................   Passed    0.03 sec
+7/7 Test #7: convert_capture ..................   Passed    2.34 sec
+86% tests passed, 1 tests failed out of 7
+
+2. test_mutex_queue alone, same build (132 is 128 plus SIGILL)
+tsan suite exit 132
+
+3. Faulting frames. Every frame above the test is libtsan or libc.
+Thread 3 "test_mutex_queu" received signal SIGILL, Illegal instruction.
+#0  __GI___sigsetjmp                     at setjmp.S:36
+#1  __tsan::call_pthread_cancel_with_... at tsan_platform_linux.cpp:589
+#2  cond_wait<___interceptor_pthread_... at tsan_interceptors_posix.cpp:1259
+#3  ___interceptor_pthread_cond_wait     at tsan_interceptors_posix.cpp:1274
+#4  std::condition_variable::wait<Mut... at condition_variable:107
+#5  MutexQueue<unsigned long, 4ul, 81... at mutex_queue.hpp:131
+#6  operator()                           at test_mutex_queue.cpp:158
+
+4. Same suite, same compiler, no sanitizer
+mutex queue tests passed
+plain suite exit 0
+
+5. Minimal reproducer: one blocking cv.wait, no project code.
+#include <condition_variable>
+#include <mutex>
+#include <thread>
+int main()
+{
+    std::mutex m;
+    std::condition_variable cv;
+    bool ready = false;
+    std::thread t([&] {
+        std::unique_lock<std::mutex> lock(m);
+        cv.wait(lock, [&] { return ready; });
+    });
+    {
+        std::lock_guard<std::mutex> lock(m);
+        ready = true;
+    }
+    cv.notify_one();
+    t.join();
+    return 0;
+}
+   g++ -std=c++20 -O1 -g -fsanitize=thread   -> exit 132
+   g++ -std=c++20 -O1 -g                     -> exit 0
+
+Conclusion: the crash is in GCC's sanitizer runtime, not in MutexQueue.
+The six suites that do not park in a condition variable pass under the
+same build. evidence/tsan_gcc15_aarch64.txt predates test_mutex_queue
+gaining a forced-park test, so its run never entered this interceptor.

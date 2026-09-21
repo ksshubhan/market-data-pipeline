@@ -728,6 +728,15 @@ before the implementation. The run produced the second form: at capacity
 2, the consumer expected record 3 and received sequence 3 with `ask_price`
 and `bid_qty` from record 1
 (`results/c1_relaxed_publication_20260831.txt`).
+Reproducing it mostly shows an outcome the prediction did not name. In
+100 consecutive runs on 19 September every run failed, and 69 returned
+the slot's previous record whole, every field from `N − capacity`; 21
+showed the second form and 10 the first
+(`evidence/c1_native_runs_20260919.txt`, classified by
+`tools/classify_c1_runs.awk`). A whole stale record is consistent with
+the index store becoming visible before any of the slot's payload
+stores, which is the simplest form of this failure and the one the
+prediction missed.
 
 **Sequence oracle.** A dropping queue makes gaps legal, so "I saw a gap"
 proves nothing. Three checks: strict monotonicity (no legal drop policy
@@ -817,6 +826,31 @@ cmake --preset default
 cmake --build --preset default
 ctest --test-dir build/default --output-on-failure
 
+# ThreadSanitizer. All seven suites should pass. The C1 arm is the
+# negative control and must report data races naming
+# spsc_ring_buffer.hpp:130 against :100, the payload read and store.
+# The evidence is the report, not a tear: instrumentation changes the
+# timing, and the run may finish its 100,000,000 iterations without
+# observing one. On macOS the sanitizer runtime ends a run that
+# reported anything with abort(), so expect exit 134 and a crash
+# report; TSAN_OPTIONS=abort_on_error=0 gives the usual exit 66.
+cmake --preset tsan
+cmake --build --preset tsan
+ctest --test-dir build/tsan --output-on-failure
+./build/tsan/c1_relaxed_publication 2> /tmp/c1_tsan.txt
+
+# C1 run natively. Exits 1 at the first corrupted record it observes
+# and prints the expected and observed fields. Which of the three
+# outcomes appears varies from run to run. The committed
+# evidence/c1_native_runs_20260919.txt is this loop's output under a
+# header recording date, commit, compiler and host.
+for i in $(seq 1 100); do
+    echo "--- run $i"
+    ./build/default/c1_relaxed_publication 2>&1
+    echo "exit $?"
+done > /tmp/c1_runs.txt
+awk -f tools/classify_c1_runs.awk /tmp/c1_runs.txt
+
 # Negative controls for test_mutex_queue. Ten deliberate faults in
 # src/mutex_queue.hpp, each built and run against the suite, with the
 # header restored byte-for-byte after each. Refuses to start on a dirty
@@ -832,16 +866,33 @@ python3 tools/run_mutex_queue_controls.py
 # exist only to have their object code disassembled: they instantiate
 # the arms with noinline wrappers so the functions are emitted. The two
 # make_*_evidence.py scripts turn these dumps into the committed
-# artifacts and refuse to write if the claims do not hold.
+# artifacts and refuse to write if the claims do not hold. Each also
+# refuses on a dirty tree and rewrites its committed file in place, so
+# compare with git diff and restore between them. Only the header's
+# Repo line is computed: the title date is fixed text and wrong for
+# any re-run, and the Host, Compiler, Disassembler, SDK and Flags
+# lines are fixed text describing the 8 September run.
 /opt/homebrew/opt/llvm/bin/llvm-objdump -d --demangle \
     build/default/check_spsc_assembly > /tmp/spsc_full.txt
 /opt/homebrew/opt/llvm/bin/llvm-objdump -d \
     build/default/check_a2b_assembly > /tmp/a2b_full.txt
+python3 tools/make_spsc_evidence.py
+git checkout -- evidence/
+python3 tools/make_a2b_evidence.py
+git checkout -- evidence/
 
 # Inspect the raw capture before trusting it: precision and quantity
 # maxima, message counts, leading zeros, E monotonicity, and
 # capture-clock monotonicity, in one pass
 python3 tools/inspect_capture.py CAPTURE.log
+
+# B2's schedule arithmetic and the 137-slot peak backlog, from the ETHW
+# capture. Run from the repo root with the capture under captures/: the
+# output records the path as given, and the committed
+# results/ethw_interarrival_20260905_145456.txt then reproduces
+# byte-for-byte (checked 19 Sep).
+python3 tools/inspect_interarrival.py \
+    captures/ethwusdt_futures_bookTicker_20260820_130813.log
 
 # Convert a capture to the binary dataset, then validate it exhaustively.
 # --require-clean makes the converter verify HEAD and the working tree
@@ -929,6 +980,41 @@ python3 tools/analyse_tail_samples.py results/tail_samples_*.csv
 # above needs the argument; the default is 100,000,000. Writes to
 # stdout; the committed artifacts are results/harness_c_*.txt.
 ./build/default/harness_c 2000000000 > /tmp/harness_c.txt
+```
+
+Three results need an aarch64 Linux guest with GCC 15: the libstdc++
+interference constants, the `-mcpu` sweep, and ThreadSanitizer under
+GCC. They were run in Ubuntu 25.10 under UTM with g++ 15.2.0. No preset
+covers them, because the base preset hardcodes the Homebrew clang path.
+
+```sh
+g++ -std=c++20 -Wall -Wextra -o /tmp/ip tools/interference_probe.cpp
+/tmp/ip
+
+# Refuses unless run from the root of a clean tree on aarch64 with GCC.
+# Its output file is named for the current date, so the 20 September
+# re-run wrote a new file beside the committed 19 September one rather
+# than replacing it.
+python3 tools/mcpu_sweep.py
+
+# Build by target. calibrate.cpp includes mach/mach_time.h unguarded,
+# so a full build stops there and links no binary at all.
+cmake -S . -B build/gcc-tsan -G Ninja -DCMAKE_CXX_COMPILER=g++ \
+    -DCMAKE_CXX_FLAGS="-O1 -g -Wall -Wextra -fsanitize=thread" \
+    -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=thread"
+cmake --build build/gcc-tsan --target test_parser test_mutex_queue \
+    test_spsc_ring_buffer test_capture_file test_replay_schedule \
+    test_replay_producer test_convert_capture c1_relaxed_publication
+
+# Six of seven pass here. mutex_queue exits 132 on SIGILL inside GCC's
+# own pthread_cond_wait interceptor, which twenty lines of standard
+# library reproduce with no project code; the same suite passes under
+# GCC without the sanitizer, and under Apple's ThreadSanitizer.
+# See evidence/gcc_tsan_cv_wait_20260920.txt.
+ctest --test-dir build/gcc-tsan --output-on-failure
+
+# Exits 66: GCC's runtime reports and exits where Apple's aborts.
+./build/gcc-tsan/c1_relaxed_publication 2> /tmp/c1_tsan_gcc.txt
 ```
 
 Measurement runs require mains power and Low Power Mode off. `harness_b`

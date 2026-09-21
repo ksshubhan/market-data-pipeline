@@ -1,0 +1,1707 @@
+C1 native runs: build/default/c1_relaxed_publication (preset default), 100 consecutive runs, stdout and stderr interleaved
+date_utc: 2026-09-19 22:26:26
+repo: b6eb17d, porcelain lines before run: 0
+compiler: Homebrew clang version 22.1.8
+host: Apple M2, macOS 26.6.2 25G83
+12:constexpr std::size_t kCapacity = 2;
+13:constexpr std::uint64_t kIterations = 100'000'000;
+--- run 1
+C1 observable corruption detected
+expected_sequence: 16887
+observed_sequence: 16885
+expected_sequence_minus_capacity: 16885
+field,expected,observed
+sequence,16887,16885
+replay_intended_send_ns,168970,168950
+capture_wall_time_ns,169070,169070
+event_time_ms,169170,169170
+transaction_time_ms,169270,169250
+bid_price,168871,168851
+ask_price,168872,168872
+bid_qty,168873,168873
+ask_qty,168874,168874
+symbol_id,1,1
+exit 1
+--- run 2
+C1 observable corruption detected
+expected_sequence: 11
+observed_sequence: 9
+expected_sequence_minus_capacity: 9
+field,expected,observed
+sequence,11,9
+replay_intended_send_ns,210,190
+capture_wall_time_ns,310,290
+event_time_ms,410,390
+transaction_time_ms,510,490
+bid_price,111,91
+ask_price,112,112
+bid_qty,113,113
+ask_qty,114,114
+symbol_id,1,1
+exit 1
+--- run 3
+C1 observable corruption detected
+expected_sequence: 28579
+observed_sequence: 28577
+expected_sequence_minus_capacity: 28577
+field,expected,observed
+sequence,28579,28577
+replay_intended_send_ns,285890,285870
+capture_wall_time_ns,285990,285970
+event_time_ms,286090,286070
+transaction_time_ms,286190,286170
+bid_price,285791,285771
+ask_price,285792,285772
+bid_qty,285793,285773
+ask_qty,285794,285774
+symbol_id,1,1
+exit 1
+--- run 4
+C1 observable corruption detected
+expected_sequence: 2489
+observed_sequence: 2487
+expected_sequence_minus_capacity: 2487
+field,expected,observed
+sequence,2489,2487
+replay_intended_send_ns,24990,24970
+capture_wall_time_ns,25090,25070
+event_time_ms,25190,25170
+transaction_time_ms,25290,25270
+bid_price,24891,24871
+ask_price,24892,24872
+bid_qty,24893,24873
+ask_qty,24894,24874
+symbol_id,1,1
+exit 1
+--- run 5
+C1 observable corruption detected
+expected_sequence: 6180
+observed_sequence: 6178
+expected_sequence_minus_capacity: 6178
+field,expected,observed
+sequence,6180,6178
+replay_intended_send_ns,61900,61880
+capture_wall_time_ns,62000,61980
+event_time_ms,62100,62080
+transaction_time_ms,62200,62180
+bid_price,61801,61781
+ask_price,61802,61782
+bid_qty,61803,61783
+ask_qty,61804,61784
+symbol_id,1,1
+exit 1
+--- run 6
+C1 observable corruption detected
+expected_sequence: 9421
+observed_sequence: 9419
+expected_sequence_minus_capacity: 9419
+field,expected,observed
+sequence,9421,9419
+replay_intended_send_ns,94310,94290
+capture_wall_time_ns,94410,94390
+event_time_ms,94510,94490
+transaction_time_ms,94610,94590
+bid_price,94211,94191
+ask_price,94212,94192
+bid_qty,94213,94193
+ask_qty,94214,94194
+symbol_id,1,1
+exit 1
+--- run 7
+C1 observable corruption detected
+expected_sequence: 11355
+observed_sequence: 11353
+expected_sequence_minus_capacity: 11353
+field,expected,observed
+sequence,11355,11353
+replay_intended_send_ns,113650,113630
+capture_wall_time_ns,113750,113730
+event_time_ms,113850,113830
+transaction_time_ms,113950,113930
+bid_price,113551,113531
+ask_price,113552,113532
+bid_qty,113553,113533
+ask_qty,113554,113534
+symbol_id,1,1
+exit 1
+--- run 8
+C1 observable corruption detected
+expected_sequence: 6319
+observed_sequence: 6317
+expected_sequence_minus_capacity: 6317
+field,expected,observed
+sequence,6319,6317
+replay_intended_send_ns,63290,63270
+capture_wall_time_ns,63390,63370
+event_time_ms,63490,63470
+transaction_time_ms,63590,63570
+bid_price,63191,63171
+ask_price,63192,63172
+bid_qty,63193,63173
+ask_qty,63194,63174
+symbol_id,1,1
+exit 1
+--- run 9
+C1 observable corruption detected
+expected_sequence: 8100
+observed_sequence: 8098
+expected_sequence_minus_capacity: 8098
+field,expected,observed
+sequence,8100,8098
+replay_intended_send_ns,81100,81080
+capture_wall_time_ns,81200,81180
+event_time_ms,81300,81280
+transaction_time_ms,81400,81400
+bid_price,81001,81001
+ask_price,81002,80982
+bid_qty,81003,80983
+ask_qty,81004,80984
+symbol_id,1,1
+exit 1
+--- run 10
+C1 observable corruption detected
+expected_sequence: 31975
+observed_sequence: 31973
+expected_sequence_minus_capacity: 31973
+field,expected,observed
+sequence,31975,31973
+replay_intended_send_ns,319850,319830
+capture_wall_time_ns,319950,319930
+event_time_ms,320050,320030
+transaction_time_ms,320150,320130
+bid_price,319751,319731
+ask_price,319752,319732
+bid_qty,319753,319733
+ask_qty,319754,319734
+symbol_id,1,1
+exit 1
+--- run 11
+C1 observable corruption detected
+expected_sequence: 7708
+observed_sequence: 7708
+expected_sequence_minus_capacity: 7706
+field,expected,observed
+sequence,7708,7708
+replay_intended_send_ns,77180,77180
+capture_wall_time_ns,77280,77280
+event_time_ms,77380,77380
+transaction_time_ms,77480,77480
+bid_price,77081,77081
+ask_price,77082,77082
+bid_qty,77083,77083
+ask_qty,77084,77064
+symbol_id,1,1
+exit 1
+--- run 12
+C1 observable corruption detected
+expected_sequence: 26902
+observed_sequence: 26902
+expected_sequence_minus_capacity: 26900
+field,expected,observed
+sequence,26902,26902
+replay_intended_send_ns,269120,269120
+capture_wall_time_ns,269220,269220
+event_time_ms,269320,269320
+transaction_time_ms,269420,269420
+bid_price,269021,269021
+ask_price,269022,269022
+bid_qty,269023,269023
+ask_qty,269024,269004
+symbol_id,1,1
+exit 1
+--- run 13
+C1 observable corruption detected
+expected_sequence: 14089
+observed_sequence: 14087
+expected_sequence_minus_capacity: 14087
+field,expected,observed
+sequence,14089,14087
+replay_intended_send_ns,140990,140970
+capture_wall_time_ns,141090,141070
+event_time_ms,141190,141170
+transaction_time_ms,141290,141270
+bid_price,140891,140871
+ask_price,140892,140872
+bid_qty,140893,140873
+ask_qty,140894,140874
+symbol_id,1,1
+exit 1
+--- run 14
+C1 observable corruption detected
+expected_sequence: 319
+observed_sequence: 319
+expected_sequence_minus_capacity: 317
+field,expected,observed
+sequence,319,319
+replay_intended_send_ns,3290,3290
+capture_wall_time_ns,3390,3390
+event_time_ms,3490,3490
+transaction_time_ms,3590,3590
+bid_price,3191,3191
+ask_price,3192,3172
+bid_qty,3193,3173
+ask_qty,3194,3194
+symbol_id,1,1
+exit 1
+--- run 15
+C1 observable corruption detected
+expected_sequence: 19811
+observed_sequence: 19809
+expected_sequence_minus_capacity: 19809
+field,expected,observed
+sequence,19811,19809
+replay_intended_send_ns,198210,198190
+capture_wall_time_ns,198310,198290
+event_time_ms,198410,198390
+transaction_time_ms,198510,198490
+bid_price,198111,198091
+ask_price,198112,198092
+bid_qty,198113,198093
+ask_qty,198114,198094
+symbol_id,1,1
+exit 1
+--- run 16
+C1 observable corruption detected
+expected_sequence: 639
+observed_sequence: 639
+expected_sequence_minus_capacity: 637
+field,expected,observed
+sequence,639,639
+replay_intended_send_ns,6490,6490
+capture_wall_time_ns,6590,6590
+event_time_ms,6690,6690
+transaction_time_ms,6790,6790
+bid_price,6391,6391
+ask_price,6392,6372
+bid_qty,6393,6373
+ask_qty,6394,6374
+symbol_id,1,1
+exit 1
+--- run 17
+C1 observable corruption detected
+expected_sequence: 2639
+observed_sequence: 2637
+expected_sequence_minus_capacity: 2637
+field,expected,observed
+sequence,2639,2637
+replay_intended_send_ns,26490,26470
+capture_wall_time_ns,26590,26570
+event_time_ms,26690,26670
+transaction_time_ms,26790,26770
+bid_price,26391,26371
+ask_price,26392,26372
+bid_qty,26393,26373
+ask_qty,26394,26374
+symbol_id,1,1
+exit 1
+--- run 18
+C1 observable corruption detected
+expected_sequence: 14531
+observed_sequence: 14529
+expected_sequence_minus_capacity: 14529
+field,expected,observed
+sequence,14531,14529
+replay_intended_send_ns,145410,145390
+capture_wall_time_ns,145510,145490
+event_time_ms,145610,145590
+transaction_time_ms,145710,145690
+bid_price,145311,145291
+ask_price,145312,145292
+bid_qty,145313,145293
+ask_qty,145314,145294
+symbol_id,1,1
+exit 1
+--- run 19
+C1 observable corruption detected
+expected_sequence: 16421
+observed_sequence: 16419
+expected_sequence_minus_capacity: 16419
+field,expected,observed
+sequence,16421,16419
+replay_intended_send_ns,164310,164290
+capture_wall_time_ns,164410,164390
+event_time_ms,164510,164490
+transaction_time_ms,164610,164590
+bid_price,164211,164191
+ask_price,164212,164192
+bid_qty,164213,164193
+ask_qty,164214,164194
+symbol_id,1,1
+exit 1
+--- run 20
+C1 observable corruption detected
+expected_sequence: 8743
+observed_sequence: 8741
+expected_sequence_minus_capacity: 8741
+field,expected,observed
+sequence,8743,8741
+replay_intended_send_ns,87530,87510
+capture_wall_time_ns,87630,87610
+event_time_ms,87730,87710
+transaction_time_ms,87830,87810
+bid_price,87431,87411
+ask_price,87432,87412
+bid_qty,87433,87413
+ask_qty,87434,87414
+symbol_id,1,1
+exit 1
+--- run 21
+C1 observable corruption detected
+expected_sequence: 13677
+observed_sequence: 13677
+expected_sequence_minus_capacity: 13675
+field,expected,observed
+sequence,13677,13677
+replay_intended_send_ns,136870,136870
+capture_wall_time_ns,136970,136970
+event_time_ms,137070,137070
+transaction_time_ms,137170,137170
+bid_price,136771,136771
+ask_price,136772,136752
+bid_qty,136773,136753
+ask_qty,136774,136774
+symbol_id,1,1
+exit 1
+--- run 22
+C1 observable corruption detected
+expected_sequence: 14115
+observed_sequence: 14115
+expected_sequence_minus_capacity: 14113
+field,expected,observed
+sequence,14115,14115
+replay_intended_send_ns,141250,141250
+capture_wall_time_ns,141350,141330
+event_time_ms,141450,141430
+transaction_time_ms,141550,141550
+bid_price,141151,141151
+ask_price,141152,141152
+bid_qty,141153,141153
+ask_qty,141154,141134
+symbol_id,1,1
+exit 1
+--- run 23
+C1 observable corruption detected
+expected_sequence: 22246
+observed_sequence: 22246
+expected_sequence_minus_capacity: 22244
+field,expected,observed
+sequence,22246,22246
+replay_intended_send_ns,222560,222560
+capture_wall_time_ns,222660,222660
+event_time_ms,222760,222760
+transaction_time_ms,222860,222860
+bid_price,222461,222461
+ask_price,222462,222462
+bid_qty,222463,222463
+ask_qty,222464,222444
+symbol_id,1,1
+exit 1
+--- run 24
+C1 observable corruption detected
+expected_sequence: 3090
+observed_sequence: 3090
+expected_sequence_minus_capacity: 3088
+field,expected,observed
+sequence,3090,3090
+replay_intended_send_ns,31000,31000
+capture_wall_time_ns,31100,31100
+event_time_ms,31200,31200
+transaction_time_ms,31300,31300
+bid_price,30901,30901
+ask_price,30902,30902
+bid_qty,30903,30903
+ask_qty,30904,30884
+symbol_id,1,1
+exit 1
+--- run 25
+C1 observable corruption detected
+expected_sequence: 13029
+observed_sequence: 13027
+expected_sequence_minus_capacity: 13027
+field,expected,observed
+sequence,13029,13027
+replay_intended_send_ns,130390,130370
+capture_wall_time_ns,130490,130470
+event_time_ms,130590,130570
+transaction_time_ms,130690,130670
+bid_price,130291,130271
+ask_price,130292,130272
+bid_qty,130293,130273
+ask_qty,130294,130274
+symbol_id,1,1
+exit 1
+--- run 26
+C1 observable corruption detected
+expected_sequence: 28729
+observed_sequence: 28727
+expected_sequence_minus_capacity: 28727
+field,expected,observed
+sequence,28729,28727
+replay_intended_send_ns,287390,287370
+capture_wall_time_ns,287490,287470
+event_time_ms,287590,287570
+transaction_time_ms,287690,287670
+bid_price,287291,287271
+ask_price,287292,287272
+bid_qty,287293,287273
+ask_qty,287294,287274
+symbol_id,1,1
+exit 1
+--- run 27
+C1 observable corruption detected
+expected_sequence: 3031
+observed_sequence: 3029
+expected_sequence_minus_capacity: 3029
+field,expected,observed
+sequence,3031,3029
+replay_intended_send_ns,30410,30390
+capture_wall_time_ns,30510,30490
+event_time_ms,30610,30590
+transaction_time_ms,30710,30690
+bid_price,30311,30291
+ask_price,30312,30292
+bid_qty,30313,30293
+ask_qty,30314,30294
+symbol_id,1,1
+exit 1
+--- run 28
+C1 observable corruption detected
+expected_sequence: 37866
+observed_sequence: 37864
+expected_sequence_minus_capacity: 37864
+field,expected,observed
+sequence,37866,37864
+replay_intended_send_ns,378760,378740
+capture_wall_time_ns,378860,378840
+event_time_ms,378960,378940
+transaction_time_ms,379060,379040
+bid_price,378661,378641
+ask_price,378662,378642
+bid_qty,378663,378643
+ask_qty,378664,378644
+symbol_id,1,1
+exit 1
+--- run 29
+C1 observable corruption detected
+expected_sequence: 5361
+observed_sequence: 5359
+expected_sequence_minus_capacity: 5359
+field,expected,observed
+sequence,5361,5359
+replay_intended_send_ns,53710,53690
+capture_wall_time_ns,53810,53790
+event_time_ms,53910,53890
+transaction_time_ms,54010,53990
+bid_price,53611,53591
+ask_price,53612,53592
+bid_qty,53613,53593
+ask_qty,53614,53594
+symbol_id,1,1
+exit 1
+--- run 30
+C1 observable corruption detected
+expected_sequence: 22521
+observed_sequence: 22519
+expected_sequence_minus_capacity: 22519
+field,expected,observed
+sequence,22521,22519
+replay_intended_send_ns,225310,225290
+capture_wall_time_ns,225410,225390
+event_time_ms,225510,225490
+transaction_time_ms,225610,225590
+bid_price,225211,225191
+ask_price,225212,225192
+bid_qty,225213,225193
+ask_qty,225214,225194
+symbol_id,1,1
+exit 1
+--- run 31
+C1 observable corruption detected
+expected_sequence: 6718
+observed_sequence: 6716
+expected_sequence_minus_capacity: 6716
+field,expected,observed
+sequence,6718,6716
+replay_intended_send_ns,67280,67260
+capture_wall_time_ns,67380,67360
+event_time_ms,67480,67460
+transaction_time_ms,67580,67560
+bid_price,67181,67161
+ask_price,67182,67162
+bid_qty,67183,67163
+ask_qty,67184,67164
+symbol_id,1,1
+exit 1
+--- run 32
+C1 observable corruption detected
+expected_sequence: 6045
+observed_sequence: 6043
+expected_sequence_minus_capacity: 6043
+field,expected,observed
+sequence,6045,6043
+replay_intended_send_ns,60550,60530
+capture_wall_time_ns,60650,60630
+event_time_ms,60750,60730
+transaction_time_ms,60850,60830
+bid_price,60451,60431
+ask_price,60452,60432
+bid_qty,60453,60433
+ask_qty,60454,60434
+symbol_id,1,1
+exit 1
+--- run 33
+C1 observable corruption detected
+expected_sequence: 65655
+observed_sequence: 65653
+expected_sequence_minus_capacity: 65653
+field,expected,observed
+sequence,65655,65653
+replay_intended_send_ns,656650,656630
+capture_wall_time_ns,656750,656730
+event_time_ms,656850,656830
+transaction_time_ms,656950,656930
+bid_price,656551,656531
+ask_price,656552,656532
+bid_qty,656553,656533
+ask_qty,656554,656534
+symbol_id,1,1
+exit 1
+--- run 34
+C1 observable corruption detected
+expected_sequence: 11453
+observed_sequence: 11453
+expected_sequence_minus_capacity: 11451
+field,expected,observed
+sequence,11453,11453
+replay_intended_send_ns,114630,114630
+capture_wall_time_ns,114730,114730
+event_time_ms,114830,114830
+transaction_time_ms,114930,114930
+bid_price,114531,114531
+ask_price,114532,114512
+bid_qty,114533,114513
+ask_qty,114534,114514
+symbol_id,1,1
+exit 1
+--- run 35
+C1 observable corruption detected
+expected_sequence: 17599
+observed_sequence: 17597
+expected_sequence_minus_capacity: 17597
+field,expected,observed
+sequence,17599,17597
+replay_intended_send_ns,176090,176070
+capture_wall_time_ns,176190,176170
+event_time_ms,176290,176270
+transaction_time_ms,176390,176370
+bid_price,175991,175971
+ask_price,175992,175972
+bid_qty,175993,175973
+ask_qty,175994,175974
+symbol_id,1,1
+exit 1
+--- run 36
+C1 observable corruption detected
+expected_sequence: 26288
+observed_sequence: 26288
+expected_sequence_minus_capacity: 26286
+field,expected,observed
+sequence,26288,26288
+replay_intended_send_ns,262980,262980
+capture_wall_time_ns,263080,263080
+event_time_ms,263180,263180
+transaction_time_ms,263280,263280
+bid_price,262881,262881
+ask_price,262882,262882
+bid_qty,262883,262883
+ask_qty,262884,262864
+symbol_id,1,1
+exit 1
+--- run 37
+C1 observable corruption detected
+expected_sequence: 24307
+observed_sequence: 24305
+expected_sequence_minus_capacity: 24305
+field,expected,observed
+sequence,24307,24305
+replay_intended_send_ns,243170,243150
+capture_wall_time_ns,243270,243250
+event_time_ms,243370,243350
+transaction_time_ms,243470,243450
+bid_price,243071,243051
+ask_price,243072,243052
+bid_qty,243073,243053
+ask_qty,243074,243054
+symbol_id,1,1
+exit 1
+--- run 38
+C1 observable corruption detected
+expected_sequence: 24404
+observed_sequence: 24404
+expected_sequence_minus_capacity: 24402
+field,expected,observed
+sequence,24404,24404
+replay_intended_send_ns,244140,244140
+capture_wall_time_ns,244240,244240
+event_time_ms,244340,244340
+transaction_time_ms,244440,244440
+bid_price,244041,244041
+ask_price,244042,244042
+bid_qty,244043,244043
+ask_qty,244044,244024
+symbol_id,1,1
+exit 1
+--- run 39
+C1 observable corruption detected
+expected_sequence: 17831
+observed_sequence: 17829
+expected_sequence_minus_capacity: 17829
+field,expected,observed
+sequence,17831,17829
+replay_intended_send_ns,178410,178390
+capture_wall_time_ns,178510,178490
+event_time_ms,178610,178590
+transaction_time_ms,178710,178690
+bid_price,178311,178291
+ask_price,178312,178292
+bid_qty,178313,178293
+ask_qty,178314,178294
+symbol_id,1,1
+exit 1
+--- run 40
+C1 observable corruption detected
+expected_sequence: 14773
+observed_sequence: 14771
+expected_sequence_minus_capacity: 14771
+field,expected,observed
+sequence,14773,14771
+replay_intended_send_ns,147830,147810
+capture_wall_time_ns,147930,147910
+event_time_ms,148030,148010
+transaction_time_ms,148130,148110
+bid_price,147731,147711
+ask_price,147732,147712
+bid_qty,147733,147713
+ask_qty,147734,147714
+symbol_id,1,1
+exit 1
+--- run 41
+C1 observable corruption detected
+expected_sequence: 5107
+observed_sequence: 5105
+expected_sequence_minus_capacity: 5105
+field,expected,observed
+sequence,5107,5105
+replay_intended_send_ns,51170,51150
+capture_wall_time_ns,51270,51250
+event_time_ms,51370,51350
+transaction_time_ms,51470,51450
+bid_price,51071,51051
+ask_price,51072,51052
+bid_qty,51073,51053
+ask_qty,51074,51054
+symbol_id,1,1
+exit 1
+--- run 42
+C1 observable corruption detected
+expected_sequence: 21279
+observed_sequence: 21277
+expected_sequence_minus_capacity: 21277
+field,expected,observed
+sequence,21279,21277
+replay_intended_send_ns,212890,212870
+capture_wall_time_ns,212990,212970
+event_time_ms,213090,213070
+transaction_time_ms,213190,213170
+bid_price,212791,212771
+ask_price,212792,212772
+bid_qty,212793,212773
+ask_qty,212794,212774
+symbol_id,1,1
+exit 1
+--- run 43
+C1 observable corruption detected
+expected_sequence: 29839
+observed_sequence: 29837
+expected_sequence_minus_capacity: 29837
+field,expected,observed
+sequence,29839,29837
+replay_intended_send_ns,298490,298470
+capture_wall_time_ns,298590,298570
+event_time_ms,298690,298670
+transaction_time_ms,298790,298770
+bid_price,298391,298371
+ask_price,298392,298372
+bid_qty,298393,298373
+ask_qty,298394,298374
+symbol_id,1,1
+exit 1
+--- run 44
+C1 observable corruption detected
+expected_sequence: 23735
+observed_sequence: 23733
+expected_sequence_minus_capacity: 23733
+field,expected,observed
+sequence,23735,23733
+replay_intended_send_ns,237450,237430
+capture_wall_time_ns,237550,237530
+event_time_ms,237650,237630
+transaction_time_ms,237750,237730
+bid_price,237351,237331
+ask_price,237352,237332
+bid_qty,237353,237333
+ask_qty,237354,237334
+symbol_id,1,1
+exit 1
+--- run 45
+C1 observable corruption detected
+expected_sequence: 11
+observed_sequence: 9
+expected_sequence_minus_capacity: 9
+field,expected,observed
+sequence,11,9
+replay_intended_send_ns,210,190
+capture_wall_time_ns,310,310
+event_time_ms,410,410
+transaction_time_ms,510,510
+bid_price,111,111
+ask_price,112,112
+bid_qty,113,113
+ask_qty,114,94
+symbol_id,1,1
+exit 1
+--- run 46
+C1 observable corruption detected
+expected_sequence: 3849
+observed_sequence: 3847
+expected_sequence_minus_capacity: 3847
+field,expected,observed
+sequence,3849,3847
+replay_intended_send_ns,38590,38570
+capture_wall_time_ns,38690,38670
+event_time_ms,38790,38770
+transaction_time_ms,38890,38870
+bid_price,38491,38471
+ask_price,38492,38492
+bid_qty,38493,38493
+ask_qty,38494,38494
+symbol_id,1,1
+exit 1
+--- run 47
+C1 observable corruption detected
+expected_sequence: 5030
+observed_sequence: 5028
+expected_sequence_minus_capacity: 5028
+field,expected,observed
+sequence,5030,5028
+replay_intended_send_ns,50400,50380
+capture_wall_time_ns,50500,50480
+event_time_ms,50600,50580
+transaction_time_ms,50700,50680
+bid_price,50301,50281
+ask_price,50302,50282
+bid_qty,50303,50283
+ask_qty,50304,50284
+symbol_id,1,1
+exit 1
+--- run 48
+C1 observable corruption detected
+expected_sequence: 4
+observed_sequence: 2
+expected_sequence_minus_capacity: 2
+field,expected,observed
+sequence,4,2
+replay_intended_send_ns,140,120
+capture_wall_time_ns,240,220
+event_time_ms,340,320
+transaction_time_ms,440,420
+bid_price,41,21
+ask_price,42,22
+bid_qty,43,23
+ask_qty,44,24
+symbol_id,1,1
+exit 1
+--- run 49
+C1 observable corruption detected
+expected_sequence: 8731
+observed_sequence: 8729
+expected_sequence_minus_capacity: 8729
+field,expected,observed
+sequence,8731,8729
+replay_intended_send_ns,87410,87390
+capture_wall_time_ns,87510,87490
+event_time_ms,87610,87590
+transaction_time_ms,87710,87690
+bid_price,87311,87291
+ask_price,87312,87292
+bid_qty,87313,87293
+ask_qty,87314,87294
+symbol_id,1,1
+exit 1
+--- run 50
+C1 observable corruption detected
+expected_sequence: 8838
+observed_sequence: 8838
+expected_sequence_minus_capacity: 8836
+field,expected,observed
+sequence,8838,8838
+replay_intended_send_ns,88480,88480
+capture_wall_time_ns,88580,88580
+event_time_ms,88680,88680
+transaction_time_ms,88780,88780
+bid_price,88381,88381
+ask_price,88382,88382
+bid_qty,88383,88383
+ask_qty,88384,88364
+symbol_id,1,1
+exit 1
+--- run 51
+C1 observable corruption detected
+expected_sequence: 37417
+observed_sequence: 37415
+expected_sequence_minus_capacity: 37415
+field,expected,observed
+sequence,37417,37415
+replay_intended_send_ns,374270,374250
+capture_wall_time_ns,374370,374350
+event_time_ms,374470,374450
+transaction_time_ms,374570,374550
+bid_price,374171,374151
+ask_price,374172,374152
+bid_qty,374173,374153
+ask_qty,374174,374154
+symbol_id,1,1
+exit 1
+--- run 52
+C1 observable corruption detected
+expected_sequence: 14777
+observed_sequence: 14775
+expected_sequence_minus_capacity: 14775
+field,expected,observed
+sequence,14777,14775
+replay_intended_send_ns,147870,147850
+capture_wall_time_ns,147970,147950
+event_time_ms,148070,148050
+transaction_time_ms,148170,148150
+bid_price,147771,147751
+ask_price,147772,147752
+bid_qty,147773,147753
+ask_qty,147774,147754
+symbol_id,1,1
+exit 1
+--- run 53
+C1 observable corruption detected
+expected_sequence: 23
+observed_sequence: 21
+expected_sequence_minus_capacity: 21
+field,expected,observed
+sequence,23,21
+replay_intended_send_ns,330,310
+capture_wall_time_ns,430,410
+event_time_ms,530,510
+transaction_time_ms,630,630
+bid_price,231,231
+ask_price,232,212
+bid_qty,233,213
+ask_qty,234,214
+symbol_id,1,1
+exit 1
+--- run 54
+C1 observable corruption detected
+expected_sequence: 2285
+observed_sequence: 2283
+expected_sequence_minus_capacity: 2283
+field,expected,observed
+sequence,2285,2283
+replay_intended_send_ns,22950,22930
+capture_wall_time_ns,23050,23030
+event_time_ms,23150,23130
+transaction_time_ms,23250,23230
+bid_price,22851,22831
+ask_price,22852,22832
+bid_qty,22853,22833
+ask_qty,22854,22834
+symbol_id,1,1
+exit 1
+--- run 55
+C1 observable corruption detected
+expected_sequence: 31173
+observed_sequence: 31171
+expected_sequence_minus_capacity: 31171
+field,expected,observed
+sequence,31173,31171
+replay_intended_send_ns,311830,311810
+capture_wall_time_ns,311930,311910
+event_time_ms,312030,312010
+transaction_time_ms,312130,312110
+bid_price,311731,311711
+ask_price,311732,311712
+bid_qty,311733,311713
+ask_qty,311734,311714
+symbol_id,1,1
+exit 1
+--- run 56
+C1 observable corruption detected
+expected_sequence: 6039
+observed_sequence: 6037
+expected_sequence_minus_capacity: 6037
+field,expected,observed
+sequence,6039,6037
+replay_intended_send_ns,60490,60470
+capture_wall_time_ns,60590,60570
+event_time_ms,60690,60670
+transaction_time_ms,60790,60770
+bid_price,60391,60371
+ask_price,60392,60372
+bid_qty,60393,60373
+ask_qty,60394,60374
+symbol_id,1,1
+exit 1
+--- run 57
+C1 observable corruption detected
+expected_sequence: 5
+observed_sequence: 3
+expected_sequence_minus_capacity: 3
+field,expected,observed
+sequence,5,3
+replay_intended_send_ns,150,130
+capture_wall_time_ns,250,230
+event_time_ms,350,330
+transaction_time_ms,450,430
+bid_price,51,31
+ask_price,52,32
+bid_qty,53,33
+ask_qty,54,34
+symbol_id,1,1
+exit 1
+--- run 58
+C1 observable corruption detected
+expected_sequence: 34005
+observed_sequence: 34003
+expected_sequence_minus_capacity: 34003
+field,expected,observed
+sequence,34005,34003
+replay_intended_send_ns,340150,340130
+capture_wall_time_ns,340250,340230
+event_time_ms,340350,340330
+transaction_time_ms,340450,340430
+bid_price,340051,340031
+ask_price,340052,340032
+bid_qty,340053,340033
+ask_qty,340054,340034
+symbol_id,1,1
+exit 1
+--- run 59
+C1 observable corruption detected
+expected_sequence: 5967
+observed_sequence: 5965
+expected_sequence_minus_capacity: 5965
+field,expected,observed
+sequence,5967,5965
+replay_intended_send_ns,59770,59750
+capture_wall_time_ns,59870,59850
+event_time_ms,59970,59950
+transaction_time_ms,60070,60050
+bid_price,59671,59651
+ask_price,59672,59652
+bid_qty,59673,59653
+ask_qty,59674,59654
+symbol_id,1,1
+exit 1
+--- run 60
+C1 observable corruption detected
+expected_sequence: 2539
+observed_sequence: 2537
+expected_sequence_minus_capacity: 2537
+field,expected,observed
+sequence,2539,2537
+replay_intended_send_ns,25490,25470
+capture_wall_time_ns,25590,25570
+event_time_ms,25690,25670
+transaction_time_ms,25790,25790
+bid_price,25391,25391
+ask_price,25392,25392
+bid_qty,25393,25393
+ask_qty,25394,25394
+symbol_id,1,1
+exit 1
+--- run 61
+C1 observable corruption detected
+expected_sequence: 13309
+observed_sequence: 13307
+expected_sequence_minus_capacity: 13307
+field,expected,observed
+sequence,13309,13307
+replay_intended_send_ns,133190,133170
+capture_wall_time_ns,133290,133270
+event_time_ms,133390,133370
+transaction_time_ms,133490,133470
+bid_price,133091,133071
+ask_price,133092,133072
+bid_qty,133093,133073
+ask_qty,133094,133074
+symbol_id,1,1
+exit 1
+--- run 62
+C1 observable corruption detected
+expected_sequence: 9131
+observed_sequence: 9129
+expected_sequence_minus_capacity: 9129
+field,expected,observed
+sequence,9131,9129
+replay_intended_send_ns,91410,91390
+capture_wall_time_ns,91510,91490
+event_time_ms,91610,91590
+transaction_time_ms,91710,91690
+bid_price,91311,91291
+ask_price,91312,91292
+bid_qty,91313,91293
+ask_qty,91314,91294
+symbol_id,1,1
+exit 1
+--- run 63
+C1 observable corruption detected
+expected_sequence: 20725
+observed_sequence: 20725
+expected_sequence_minus_capacity: 20723
+field,expected,observed
+sequence,20725,20725
+replay_intended_send_ns,207350,207350
+capture_wall_time_ns,207450,207450
+event_time_ms,207550,207550
+transaction_time_ms,207650,207650
+bid_price,207251,207251
+ask_price,207252,207232
+bid_qty,207253,207233
+ask_qty,207254,207234
+symbol_id,1,1
+exit 1
+--- run 64
+C1 observable corruption detected
+expected_sequence: 32009
+observed_sequence: 32009
+expected_sequence_minus_capacity: 32007
+field,expected,observed
+sequence,32009,32009
+replay_intended_send_ns,320190,320190
+capture_wall_time_ns,320290,320290
+event_time_ms,320390,320390
+transaction_time_ms,320490,320490
+bid_price,320091,320091
+ask_price,320092,320072
+bid_qty,320093,320073
+ask_qty,320094,320094
+symbol_id,1,1
+exit 1
+--- run 65
+C1 observable corruption detected
+expected_sequence: 17839
+observed_sequence: 17837
+expected_sequence_minus_capacity: 17837
+field,expected,observed
+sequence,17839,17837
+replay_intended_send_ns,178490,178470
+capture_wall_time_ns,178590,178570
+event_time_ms,178690,178670
+transaction_time_ms,178790,178770
+bid_price,178391,178371
+ask_price,178392,178372
+bid_qty,178393,178373
+ask_qty,178394,178374
+symbol_id,1,1
+exit 1
+--- run 66
+C1 observable corruption detected
+expected_sequence: 12
+observed_sequence: 10
+expected_sequence_minus_capacity: 10
+field,expected,observed
+sequence,12,10
+replay_intended_send_ns,220,200
+capture_wall_time_ns,320,300
+event_time_ms,420,400
+transaction_time_ms,520,500
+bid_price,121,101
+ask_price,122,102
+bid_qty,123,103
+ask_qty,124,104
+symbol_id,1,1
+exit 1
+--- run 67
+C1 observable corruption detected
+expected_sequence: 7164
+observed_sequence: 7164
+expected_sequence_minus_capacity: 7162
+field,expected,observed
+sequence,7164,7164
+replay_intended_send_ns,71740,71740
+capture_wall_time_ns,71840,71820
+event_time_ms,71940,71920
+transaction_time_ms,72040,72020
+bid_price,71641,71621
+ask_price,71642,71622
+bid_qty,71643,71623
+ask_qty,71644,71644
+symbol_id,1,1
+exit 1
+--- run 68
+C1 observable corruption detected
+expected_sequence: 85057
+observed_sequence: 85055
+expected_sequence_minus_capacity: 85055
+field,expected,observed
+sequence,85057,85055
+replay_intended_send_ns,850670,850650
+capture_wall_time_ns,850770,850750
+event_time_ms,850870,850850
+transaction_time_ms,850970,850950
+bid_price,850571,850551
+ask_price,850572,850552
+bid_qty,850573,850553
+ask_qty,850574,850554
+symbol_id,1,1
+exit 1
+--- run 69
+C1 observable corruption detected
+expected_sequence: 12375
+observed_sequence: 12375
+expected_sequence_minus_capacity: 12373
+field,expected,observed
+sequence,12375,12375
+replay_intended_send_ns,123850,123850
+capture_wall_time_ns,123950,123950
+event_time_ms,124050,124050
+transaction_time_ms,124150,124150
+bid_price,123751,123751
+ask_price,123752,123732
+bid_qty,123753,123733
+ask_qty,123754,123754
+symbol_id,1,1
+exit 1
+--- run 70
+C1 observable corruption detected
+expected_sequence: 10227
+observed_sequence: 10225
+expected_sequence_minus_capacity: 10225
+field,expected,observed
+sequence,10227,10225
+replay_intended_send_ns,102370,102350
+capture_wall_time_ns,102470,102450
+event_time_ms,102570,102550
+transaction_time_ms,102670,102650
+bid_price,102271,102251
+ask_price,102272,102252
+bid_qty,102273,102253
+ask_qty,102274,102254
+symbol_id,1,1
+exit 1
+--- run 71
+C1 observable corruption detected
+expected_sequence: 7824
+observed_sequence: 7822
+expected_sequence_minus_capacity: 7822
+field,expected,observed
+sequence,7824,7822
+replay_intended_send_ns,78340,78320
+capture_wall_time_ns,78440,78420
+event_time_ms,78540,78520
+transaction_time_ms,78640,78620
+bid_price,78241,78221
+ask_price,78242,78222
+bid_qty,78243,78223
+ask_qty,78244,78224
+symbol_id,1,1
+exit 1
+--- run 72
+C1 observable corruption detected
+expected_sequence: 18631
+observed_sequence: 18629
+expected_sequence_minus_capacity: 18629
+field,expected,observed
+sequence,18631,18629
+replay_intended_send_ns,186410,186390
+capture_wall_time_ns,186510,186490
+event_time_ms,186610,186590
+transaction_time_ms,186710,186690
+bid_price,186311,186291
+ask_price,186312,186292
+bid_qty,186313,186293
+ask_qty,186314,186294
+symbol_id,1,1
+exit 1
+--- run 73
+C1 observable corruption detected
+expected_sequence: 21
+observed_sequence: 19
+expected_sequence_minus_capacity: 19
+field,expected,observed
+sequence,21,19
+replay_intended_send_ns,310,290
+capture_wall_time_ns,410,390
+event_time_ms,510,490
+transaction_time_ms,610,590
+bid_price,211,191
+ask_price,212,192
+bid_qty,213,193
+ask_qty,214,194
+symbol_id,1,1
+exit 1
+--- run 74
+C1 observable corruption detected
+expected_sequence: 2841
+observed_sequence: 2839
+expected_sequence_minus_capacity: 2839
+field,expected,observed
+sequence,2841,2839
+replay_intended_send_ns,28510,28490
+capture_wall_time_ns,28610,28590
+event_time_ms,28710,28690
+transaction_time_ms,28810,28790
+bid_price,28411,28391
+ask_price,28412,28392
+bid_qty,28413,28393
+ask_qty,28414,28394
+symbol_id,1,1
+exit 1
+--- run 75
+C1 observable corruption detected
+expected_sequence: 6201
+observed_sequence: 6199
+expected_sequence_minus_capacity: 6199
+field,expected,observed
+sequence,6201,6199
+replay_intended_send_ns,62110,62090
+capture_wall_time_ns,62210,62190
+event_time_ms,62310,62290
+transaction_time_ms,62410,62390
+bid_price,62011,61991
+ask_price,62012,61992
+bid_qty,62013,61993
+ask_qty,62014,61994
+symbol_id,1,1
+exit 1
+--- run 76
+C1 observable corruption detected
+expected_sequence: 5428
+observed_sequence: 5426
+expected_sequence_minus_capacity: 5426
+field,expected,observed
+sequence,5428,5426
+replay_intended_send_ns,54380,54360
+capture_wall_time_ns,54480,54460
+event_time_ms,54580,54560
+transaction_time_ms,54680,54660
+bid_price,54281,54261
+ask_price,54282,54262
+bid_qty,54283,54263
+ask_qty,54284,54264
+symbol_id,1,1
+exit 1
+--- run 77
+C1 observable corruption detected
+expected_sequence: 10575
+observed_sequence: 10575
+expected_sequence_minus_capacity: 10573
+field,expected,observed
+sequence,10575,10575
+replay_intended_send_ns,105850,105850
+capture_wall_time_ns,105950,105950
+event_time_ms,106050,106050
+transaction_time_ms,106150,106150
+bid_price,105751,105751
+ask_price,105752,105732
+bid_qty,105753,105733
+ask_qty,105754,105734
+symbol_id,1,1
+exit 1
+--- run 78
+C1 observable corruption detected
+expected_sequence: 18307
+observed_sequence: 18305
+expected_sequence_minus_capacity: 18305
+field,expected,observed
+sequence,18307,18305
+replay_intended_send_ns,183170,183150
+capture_wall_time_ns,183270,183250
+event_time_ms,183370,183350
+transaction_time_ms,183470,183450
+bid_price,183071,183051
+ask_price,183072,183052
+bid_qty,183073,183053
+ask_qty,183074,183054
+symbol_id,1,1
+exit 1
+--- run 79
+C1 observable corruption detected
+expected_sequence: 32177
+observed_sequence: 32175
+expected_sequence_minus_capacity: 32175
+field,expected,observed
+sequence,32177,32175
+replay_intended_send_ns,321870,321850
+capture_wall_time_ns,321970,321950
+event_time_ms,322070,322050
+transaction_time_ms,322170,322150
+bid_price,321771,321751
+ask_price,321772,321752
+bid_qty,321773,321753
+ask_qty,321774,321754
+symbol_id,1,1
+exit 1
+--- run 80
+C1 observable corruption detected
+expected_sequence: 46747
+observed_sequence: 46745
+expected_sequence_minus_capacity: 46745
+field,expected,observed
+sequence,46747,46745
+replay_intended_send_ns,467570,467550
+capture_wall_time_ns,467670,467650
+event_time_ms,467770,467750
+transaction_time_ms,467870,467850
+bid_price,467471,467451
+ask_price,467472,467452
+bid_qty,467473,467453
+ask_qty,467474,467454
+symbol_id,1,1
+exit 1
+--- run 81
+C1 observable corruption detected
+expected_sequence: 12
+observed_sequence: 10
+expected_sequence_minus_capacity: 10
+field,expected,observed
+sequence,12,10
+replay_intended_send_ns,220,200
+capture_wall_time_ns,320,300
+event_time_ms,420,400
+transaction_time_ms,520,500
+bid_price,121,101
+ask_price,122,102
+bid_qty,123,103
+ask_qty,124,104
+symbol_id,1,1
+exit 1
+--- run 82
+C1 observable corruption detected
+expected_sequence: 10883
+observed_sequence: 10881
+expected_sequence_minus_capacity: 10881
+field,expected,observed
+sequence,10883,10881
+replay_intended_send_ns,108930,108910
+capture_wall_time_ns,109030,109010
+event_time_ms,109130,109110
+transaction_time_ms,109230,109210
+bid_price,108831,108811
+ask_price,108832,108812
+bid_qty,108833,108813
+ask_qty,108834,108814
+symbol_id,1,1
+exit 1
+--- run 83
+C1 observable corruption detected
+expected_sequence: 37821
+observed_sequence: 37819
+expected_sequence_minus_capacity: 37819
+field,expected,observed
+sequence,37821,37819
+replay_intended_send_ns,378310,378290
+capture_wall_time_ns,378410,378390
+event_time_ms,378510,378490
+transaction_time_ms,378610,378590
+bid_price,378211,378191
+ask_price,378212,378192
+bid_qty,378213,378193
+ask_qty,378214,378194
+symbol_id,1,1
+exit 1
+--- run 84
+C1 observable corruption detected
+expected_sequence: 49131
+observed_sequence: 49129
+expected_sequence_minus_capacity: 49129
+field,expected,observed
+sequence,49131,49129
+replay_intended_send_ns,491410,491390
+capture_wall_time_ns,491510,491510
+event_time_ms,491610,491610
+transaction_time_ms,491710,491690
+bid_price,491311,491291
+ask_price,491312,491292
+bid_qty,491313,491293
+ask_qty,491314,491294
+symbol_id,1,1
+exit 1
+--- run 85
+C1 observable corruption detected
+expected_sequence: 16967
+observed_sequence: 16965
+expected_sequence_minus_capacity: 16965
+field,expected,observed
+sequence,16967,16965
+replay_intended_send_ns,169770,169750
+capture_wall_time_ns,169870,169850
+event_time_ms,169970,169950
+transaction_time_ms,170070,170050
+bid_price,169671,169651
+ask_price,169672,169652
+bid_qty,169673,169653
+ask_qty,169674,169654
+symbol_id,1,1
+exit 1
+--- run 86
+C1 observable corruption detected
+expected_sequence: 16225
+observed_sequence: 16223
+expected_sequence_minus_capacity: 16223
+field,expected,observed
+sequence,16225,16223
+replay_intended_send_ns,162350,162330
+capture_wall_time_ns,162450,162430
+event_time_ms,162550,162530
+transaction_time_ms,162650,162630
+bid_price,162251,162231
+ask_price,162252,162232
+bid_qty,162253,162233
+ask_qty,162254,162234
+symbol_id,1,1
+exit 1
+--- run 87
+C1 observable corruption detected
+expected_sequence: 29490
+observed_sequence: 29488
+expected_sequence_minus_capacity: 29488
+field,expected,observed
+sequence,29490,29488
+replay_intended_send_ns,295000,294980
+capture_wall_time_ns,295100,295080
+event_time_ms,295200,295180
+transaction_time_ms,295300,295280
+bid_price,294901,294881
+ask_price,294902,294882
+bid_qty,294903,294883
+ask_qty,294904,294884
+symbol_id,1,1
+exit 1
+--- run 88
+C1 observable corruption detected
+expected_sequence: 24514
+observed_sequence: 24512
+expected_sequence_minus_capacity: 24512
+field,expected,observed
+sequence,24514,24512
+replay_intended_send_ns,245240,245220
+capture_wall_time_ns,245340,245320
+event_time_ms,245440,245420
+transaction_time_ms,245540,245520
+bid_price,245141,245121
+ask_price,245142,245122
+bid_qty,245143,245123
+ask_qty,245144,245124
+symbol_id,1,1
+exit 1
+--- run 89
+C1 observable corruption detected
+expected_sequence: 6645
+observed_sequence: 6643
+expected_sequence_minus_capacity: 6643
+field,expected,observed
+sequence,6645,6643
+replay_intended_send_ns,66550,66530
+capture_wall_time_ns,66650,66630
+event_time_ms,66750,66730
+transaction_time_ms,66850,66830
+bid_price,66451,66431
+ask_price,66452,66432
+bid_qty,66453,66433
+ask_qty,66454,66434
+symbol_id,1,1
+exit 1
+--- run 90
+C1 observable corruption detected
+expected_sequence: 67941
+observed_sequence: 67939
+expected_sequence_minus_capacity: 67939
+field,expected,observed
+sequence,67941,67939
+replay_intended_send_ns,679510,679490
+capture_wall_time_ns,679610,679590
+event_time_ms,679710,679690
+transaction_time_ms,679810,679790
+bid_price,679411,679391
+ask_price,679412,679392
+bid_qty,679413,679393
+ask_qty,679414,679394
+symbol_id,1,1
+exit 1
+--- run 91
+C1 observable corruption detected
+expected_sequence: 2953
+observed_sequence: 2951
+expected_sequence_minus_capacity: 2951
+field,expected,observed
+sequence,2953,2951
+replay_intended_send_ns,29630,29610
+capture_wall_time_ns,29730,29710
+event_time_ms,29830,29810
+transaction_time_ms,29930,29910
+bid_price,29531,29511
+ask_price,29532,29512
+bid_qty,29533,29513
+ask_qty,29534,29514
+symbol_id,1,1
+exit 1
+--- run 92
+C1 observable corruption detected
+expected_sequence: 402
+observed_sequence: 400
+expected_sequence_minus_capacity: 400
+field,expected,observed
+sequence,402,400
+replay_intended_send_ns,4120,4100
+capture_wall_time_ns,4220,4200
+event_time_ms,4320,4300
+transaction_time_ms,4420,4400
+bid_price,4021,4001
+ask_price,4022,4002
+bid_qty,4023,4003
+ask_qty,4024,4004
+symbol_id,1,1
+exit 1
+--- run 93
+C1 observable corruption detected
+expected_sequence: 7963
+observed_sequence: 7961
+expected_sequence_minus_capacity: 7961
+field,expected,observed
+sequence,7963,7961
+replay_intended_send_ns,79730,79710
+capture_wall_time_ns,79830,79810
+event_time_ms,79930,79910
+transaction_time_ms,80030,80010
+bid_price,79631,79611
+ask_price,79632,79612
+bid_qty,79633,79613
+ask_qty,79634,79614
+symbol_id,1,1
+exit 1
+--- run 94
+C1 observable corruption detected
+expected_sequence: 8105
+observed_sequence: 8105
+expected_sequence_minus_capacity: 8103
+field,expected,observed
+sequence,8105,8105
+replay_intended_send_ns,81150,81150
+capture_wall_time_ns,81250,81250
+event_time_ms,81350,81350
+transaction_time_ms,81450,81450
+bid_price,81051,81051
+ask_price,81052,81032
+bid_qty,81053,81033
+ask_qty,81054,81034
+symbol_id,1,1
+exit 1
+--- run 95
+C1 observable corruption detected
+expected_sequence: 7219
+observed_sequence: 7217
+expected_sequence_minus_capacity: 7217
+field,expected,observed
+sequence,7219,7217
+replay_intended_send_ns,72290,72270
+capture_wall_time_ns,72390,72370
+event_time_ms,72490,72470
+transaction_time_ms,72590,72570
+bid_price,72191,72171
+ask_price,72192,72172
+bid_qty,72193,72173
+ask_qty,72194,72174
+symbol_id,1,1
+exit 1
+--- run 96
+C1 observable corruption detected
+expected_sequence: 1591
+observed_sequence: 1591
+expected_sequence_minus_capacity: 1589
+field,expected,observed
+sequence,1591,1591
+replay_intended_send_ns,16010,16010
+capture_wall_time_ns,16110,16110
+event_time_ms,16210,16210
+transaction_time_ms,16310,16310
+bid_price,15911,15911
+ask_price,15912,15892
+bid_qty,15913,15893
+ask_qty,15914,15894
+symbol_id,1,1
+exit 1
+--- run 97
+C1 observable corruption detected
+expected_sequence: 4181
+observed_sequence: 4179
+expected_sequence_minus_capacity: 4179
+field,expected,observed
+sequence,4181,4179
+replay_intended_send_ns,41910,41890
+capture_wall_time_ns,42010,41990
+event_time_ms,42110,42090
+transaction_time_ms,42210,42210
+bid_price,41811,41811
+ask_price,41812,41792
+bid_qty,41813,41793
+ask_qty,41814,41794
+symbol_id,1,1
+exit 1
+--- run 98
+C1 observable corruption detected
+expected_sequence: 10095
+observed_sequence: 10095
+expected_sequence_minus_capacity: 10093
+field,expected,observed
+sequence,10095,10095
+replay_intended_send_ns,101050,101050
+capture_wall_time_ns,101150,101150
+event_time_ms,101250,101250
+transaction_time_ms,101350,101350
+bid_price,100951,100951
+ask_price,100952,100952
+bid_qty,100953,100953
+ask_qty,100954,100934
+symbol_id,1,1
+exit 1
+--- run 99
+C1 observable corruption detected
+expected_sequence: 36786
+observed_sequence: 36786
+expected_sequence_minus_capacity: 36784
+field,expected,observed
+sequence,36786,36786
+replay_intended_send_ns,367960,367960
+capture_wall_time_ns,368060,368060
+event_time_ms,368160,368160
+transaction_time_ms,368260,368260
+bid_price,367861,367861
+ask_price,367862,367862
+bid_qty,367863,367863
+ask_qty,367864,367844
+symbol_id,1,1
+exit 1
+--- run 100
+C1 observable corruption detected
+expected_sequence: 6191
+observed_sequence: 6189
+expected_sequence_minus_capacity: 6189
+field,expected,observed
+sequence,6191,6189
+replay_intended_send_ns,62010,61990
+capture_wall_time_ns,62110,62090
+event_time_ms,62210,62190
+transaction_time_ms,62310,62290
+bid_price,61911,61891
+ask_price,61912,61892
+bid_qty,61913,61893
+ask_qty,61914,61914
+symbol_id,1,1
+exit 1
