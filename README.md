@@ -16,6 +16,10 @@ they appear — B3's parse-cost table and the harness C stress record only
 their reduced result, so they can be checked against the file but not
 re-derived from it.
 
+How the code is organised, meaning the components, the data flow
+between them and which file does what, is in
+[ARCHITECTURE.md](ARCHITECTURE.md).
+
 ---
 
 ## The problem
