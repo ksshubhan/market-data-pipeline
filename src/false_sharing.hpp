@@ -1,3 +1,12 @@
+// Queue-free kernels for harness A's two false-sharing experiments:
+// A2b (two atomics a chosen distance apart, each stored to by its own
+// thread) and A3b (two adjacent Record slots, one written, one read).
+//
+// They live in a header, rather than inside harness_a.cpp, so that
+// check_a2b_assembly.cpp disassembles the code the harness actually runs
+// rather than a second copy of it. A disassembly of a duplicate proves
+// nothing about the binary that produced the numbers. See ARCHITECTURE.md.
+
 #pragma once
 
 #include "record.hpp"
@@ -7,10 +16,9 @@
 #include <cstdint>
 
 
-// A2b primitives, factored out of harness_a.cpp so that
-// check_a2b_assembly.cpp disassembles the code the harness actually runs
-// rather than a second copy of it. A disassembly of a duplicate proves
-// nothing about the binary that produced the numbers.
+// ---------------------------------------------------------------------
+// A2b: counter-level false sharing
+// ---------------------------------------------------------------------
 
 // Two atomics a fixed distance apart. The struct is always 256-aligned so
 // the first counter sits on a line boundary in every arm; only the
@@ -52,8 +60,8 @@ inline void separation_store_loop(
 // A3b: slot-level false sharing
 // ---------------------------------------------------------------------
 //
-// §6.5's A3 asks whether payload false sharing bites when the queue is
-// near-empty — the producer writing slot n while the consumer is still
+// A3 asks whether payload false sharing bites when the queue is
+// near-empty: the producer writing slot n while the consumer is still
 // reading slot n-1. A3b asks it without the queue, for the same reason
 // A2b did: in harness A the throughput number is dominated by
 // producer/consumer imbalance, so a slot-layout difference and a
@@ -81,9 +89,10 @@ inline void separation_store_loop(
 //
 // There is deliberately no same-slot positive control. Two threads
 // accessing one non-atomic Record concurrently is a data race and
-// therefore undefined, and §6.5 already refuses to report numbers from
+// therefore undefined, and this project does not report numbers from
 // undefined programs. A2b is the control: same machine, same loop shape,
-// 3.56x when the accesses share a line.
+// 3.566x and 3.596x slower in its two committed runs when the accesses
+// share a line.
 template <std::size_t Alignment>
 struct alignas(Alignment) AlignedSlot {
     Record record;
