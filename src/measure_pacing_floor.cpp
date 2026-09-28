@@ -1,3 +1,24 @@
+// measure_pacing_floor: the replay producer's ceiling, the highest offered
+// rate it can hold with no queue attached.
+//
+// Usage: measure_pacing_floor <git-commit-40-hex> <dirty:0|1>
+// Prints provenance and one CSV row per requested rate on stdout; the
+// committed run is results/pacing_floor_20260928.txt. macOS only: it exits
+// 1 unless the QoS class is applied, and elsewhere it never is.
+// Related: replay_producer.hpp (run_replay and the clock spin that paces
+// it), replay_schedule.hpp (build_fixed_rate_schedule), harness_b.cpp (the
+// sweep this bounds), tools/inspect_interarrival.py (which uses the floor).
+//
+// Pacing is a spin on the clock, so the producer has a ceiling set by how
+// fast it can read the clock and assemble a Record. Above it the requested
+// rate is fiction: every message ships late. Knowing the ceiling keeps
+// harness B's x-axis to rates the producer can deliver, and gives B2's
+// compression analysis the smallest gap the producer can honour. The
+// committed run puts it at about 20 ns per record, roughly 50M records/s.
+//
+// There is no queue on purpose. With one, the answer would be "producer
+// plus queue", which is not what the sweep needs to be bounded by.
+
 #include "replay_producer.hpp"
 #include "replay_schedule.hpp"
 #include "measurement_thread.hpp"
@@ -11,39 +32,18 @@
 #include <vector>
 
 
-// How fast can the producer issue, with nothing attached?
-//
-// Pacing is a spin on the clock (see replay_producer.hpp), so there is a
-// ceiling on offered rate set by how quickly the producer can read the
-// clock, stamp a Record and move on. Above that ceiling the requested
-// rate is fiction: the schedule says send every 2 µs, the producer needs
-// 3 µs, and every message ships late.
-//
-// Measuring it before harness B is written bounds the sweep. Without this
-// number the first B run would put rates on the x-axis that the producer
-// physically cannot deliver, §6.4's lag gate would reject them, and the
-// time would be spent discovering a property of the producer rather than
-// of the queue. It is also the figure §6.5's B2 compression analysis is
-// parameterised around and currently leaves unmeasured — "the fraction of
-// original gaps that compress below the producer's pacing floor" cannot
-// be computed until the floor is known.
-//
-// There is no queue here on purpose. A queue would add its own cost and
-// the answer would be "producer plus queue", which is not the quantity
-// the sweep needs to be bounded by.
-
 namespace {
 
-// Stands in for the queue: same call shape, no work, so the loop measures
-// pacing and record assembly and nothing else.
+// Stands in for a queue: the try_push and full_rejections that run_replay
+// calls, and no work, so a trial times pacing and Record assembly only.
 struct NullSink {
     std::uint64_t accepted = 0;
 
     bool try_push(const Record& record) noexcept
     {
-        // Consume the record so the assembly above cannot be optimised
-        // away. §6.4b's rule about observable side effects applies to any
-        // loop whose result is discarded.
+        // Without an observable use of the record, the compiler may delete
+        // the stores in run_replay that build it, and the trial would time
+        // an empty loop.
         asm volatile("" :: "r"(&record) : "memory");
         ++accepted;
         return true;
@@ -118,9 +118,9 @@ int main(int argc, char* argv[])
         return 1;
     }
 
-    // §5: the same P-core bias hint the A harness uses, verified rather
-    // than requested, since a pacing figure measured on an E-core would
-    // understate the ceiling.
+    // Bias toward the P-cores, and read back rather than only requested: a
+    // ceiling measured on an E-core would understate it. A bias, not
+    // pinning; macOS has no pinning.
     const QosResult qos = request_user_interactive_qos();
 
     if (qos != QosResult::applied) {
@@ -132,18 +132,15 @@ int main(int argc, char* argv[])
         return 1;
     }
 
-    // Two hundred thousand records per trial: long enough that startup is
-    // negligible, short enough that the whole sweep takes seconds. The
-    // pacing ceiling is a property of the loop, not of the run length.
+    // 200,000 records per trial: long enough that startup is negligible,
+    // and the ceiling is a property of the loop, not the run length. The
+    // sweep takes about 28 s, 20 of them in the 10k/s trial.
     constexpr std::size_t kRecords = 200'000;
 
-    // The sweep must run past the point where the producer stops
-    // keeping up, or it does not locate a floor — it just confirms the
-    // producer is fast enough for whatever range was guessed. The top
-    // rates here are deliberately absurd: at 100 MHz the period is 10 ns,
-    // which is below the cost of reading the clock once, so the producer
-    // cannot possibly hold that schedule and the achieved-rate column
-    // must fall away from the requested one.
+    // The sweep has to run past the ceiling, or it only confirms the
+    // producer is fast enough for the range guessed. At 100M/s the period
+    // is 10 ns, below the ~19.9 ns timer calibration measured between
+    // back-to-back clock reads, so the top rate cannot be held.
     const double rates[] = {
         10'000.0,
         50'000.0,
@@ -159,6 +156,8 @@ int main(int argc, char* argv[])
         100'000'000.0
     };
 
+    // 17 significant digits, so every double in the CSV round-trips
+    // exactly.
     std::cout << std::setprecision(17);
 
     std::cout
@@ -172,6 +171,8 @@ int main(int argc, char* argv[])
         << "requested_rate_hz,achieved_rate_hz,ratio,"
            "p50_lag_ns,p99_lag_ns,max_lag_ns,sustained\n";
 
+    // Zeroed records: nothing reads them, and copying one costs the same
+    // whatever it holds.
     std::vector<CaptureRecord> slice(kRecords);
     std::vector<std::uint32_t> lag_ns;
 
@@ -183,6 +184,8 @@ int main(int argc, char* argv[])
 
         NullSink sink;
 
+        // symbol_id, slice_start and first_sequence are 0: they describe a
+        // captured slice, and there is none here.
         const ReplayStats stats = run_replay(
             sink,
             std::span<const CaptureRecord>(slice),
@@ -197,13 +200,18 @@ int main(int argc, char* argv[])
             static_cast<double>(stats.finished_ns - stats.t0_ns) /
             1'000'000'000.0;
 
+        // The schedule's first send is at offset 0 and its last at N-1
+        // periods, so this divides N records by N-1 intervals and reads
+        // high by N/(N-1), 5 ppm at 200,000 records. That is why sustained
+        // ratios sit just above 1.
         const double achieved =
             static_cast<double>(kRecords) / elapsed_seconds;
 
-        // Below 0.99 the producer is not delivering the rate on the
-        // x-axis, which is the same criterion §6.4's lag gate applies
-        // per-datapoint. Flagged here so the floor is readable at a
-        // glance rather than inferred from the ratio column.
+        // 0.99 is this program's own flag for reading the table, not
+        // harness B's lag gate, which rejects a datapoint whose p99 lag
+        // exceeds one period. The two disagree near the ceiling: in the
+        // committed run 50M/s averages 0.997 and reads yes while its p99
+        // lag is about 600 periods.
         const bool sustained = (achieved / rate) >= 0.99;
 
         std::cout
@@ -215,6 +223,8 @@ int main(int argc, char* argv[])
             << stats.max_lag_ns << ','
             << (sustained ? "yes" : "no") << '\n';
 
+        // The null sink accepts everything, so this checks run_replay's own
+        // count, not the sink.
         if (stats.pushed != kRecords) {
             std::cerr << "null sink did not accept every record\n";
             return 1;
