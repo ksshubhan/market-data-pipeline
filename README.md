@@ -199,35 +199,38 @@ interleaved, median reported.
 
 | | ns per message |
 |---|---|
-| `parse_book_ticker` over captured JSON | **161.5** |
-| Full push + pop through the SPSC ring, single-threaded | 5.83 |
-| 56-byte `CaptureRecord` assignment (the pre-parsed path) | 0.93 |
+| `parse_book_ticker` over captured JSON | **170.8** |
+| Full push + pop through the SPSC ring, single-threaded | 6.06 |
+| 56-byte `CaptureRecord` assignment (the pre-parsed path) | 1.14 |
 
-**Parse cost dominates handoff cost by 27.7×** — which is why real venues
+**Parse cost dominates handoff cost by 28.2×** — which is why real venues
 ship binary protocols rather than JSON.
 
 Three qualifications, because the number flatters the parser otherwise.
 
 The handoff arm is **single-threaded**, so it pays no cross-core coherence
 traffic and is a *lower bound* on a real handoff. A1b's two-thread figure
-is ~30 ns/handoff, against which the ratio is ~5.4×. The lower bound is
+is ~30 ns/handoff, against which the ratio is ~5.6×. The lower bound is
 the honest comparison to lead with: if parse dominates the cheapest
 possible handoff, it dominates the real one.
 
 **This is a schema-specific key scanner, not a general JSON parser.** It
 assumes a known Binance bookTicker layout and does a single left-to-right
-pass with no DOM, no allocation and no floating point. 161 ns is far below
-the 1,000–3,000 ns a generic JSON library would cost, so this figure must
-not be quoted as "the cost of JSON parsing".
+pass with no DOM, no allocation and no floating point. A generic library
+that builds a DOM and allocates would cost more, by an amount not measured
+here, so this figure must not be quoted as "the cost of JSON parsing".
 
-The 0.93 ns copy figure is a **floor, not a like-for-like third arm** — a
-56-byte assignment in a tight loop over a resident array, where the
-compiler is free to keep everything in registers. It bounds what the
-pre-parsed path can cost; it is not what the producer pays per record in
-context.
+The 1.14 ns copy figure is a **floor, not a like-for-like third arm** — a
+56-byte assignment in a tight loop over an 11.2 MB array, with no clock
+read, no sequence number and no queue. It bounds what the pre-parsed path
+can cost; it is not what the producer pays per record in context. An
+earlier run reported 0.93 ns because the compiler had reduced the
+assignment to a load of the one field the loop read. That run is kept as
+`results/parse_cost_20260905_140732.txt`; its parse and handoff figures
+agree with this one to within 6%.
 
 B3 is measured this way rather than as an end-to-end `--parse-in-ingest`
-arm because a ~161 ns parse would be invisible inside a distribution whose
+arm because a ~171 ns parse would be invisible inside a distribution whose
 upper percentiles sit on a 12 µs scheduler floor. Batching answers a
 question about a mean at far higher resolution — which is the same
 reasoning that split the harnesses in the first place.
@@ -959,9 +962,10 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 python3 tools/analyse_tail_samples.py results/tail_samples_*.csv
 
 # B3 parse cost. Writes to stdout; the committed artifact is
-# results/parse_cost_20260905_140732.txt. It records the reduced median
+# results/parse_cost_20260928_171443.txt. It records the reduced median
 # over 20 rounds, not the per-round samples, so the figures can be read
-# back from it but not recomputed.
+# back from it but not recomputed. The 5 Sep run beside it predates the
+# fix that made the copy arm perform the whole assignment.
 ./build/default/measure_parse_cost $(git rev-parse HEAD) 0 CAPTURE.log \
     BTCUSDT > /tmp/parse_cost.txt
 
