@@ -1,3 +1,16 @@
+// replay_schedule.hpp: ReplaySchedule, the intended send times a replay
+// runs against, and the two functions that build one.
+//
+// A schedule is one offset from t0 per record, plus counts of the capture
+// clock's backwards steps. Building one is pure arithmetic: no clock, no
+// queue, no threads. build_fixed_rate_schedule paces records at a chosen
+// rate and is what harness_b and measure_pacing_floor use.
+// build_replay_schedule replays captured gaps; only the tests call it.
+//
+// Related: replay_schedule.cpp, replay_producer.hpp (runs a schedule),
+// record.hpp (CaptureRecord), test_replay_schedule.cpp,
+// tools/inspect_interarrival.py (replicates build_replay_schedule).
+
 #pragma once
 
 #include "record.hpp"
@@ -8,28 +21,21 @@
 #include <vector>
 
 
-// The intended-send schedule for a replay run.
-//
-// §6.4: the schedule is a pure function of record index and is fixed
-// before the measurement window opens. If the producer instead computed
-// an intended send time at the moment it was about to push, coordinated
-// omission would be reintroduced through the back door — the producer
-// stalls, the schedule slides with it, and the stall never appears in any
-// latency.
-//
-// This lives apart from the producer because it is pure arithmetic with
-// no clock, no queue and no threads, and because the trap in it (see
-// build_replay_schedule) is the single thing in Step 11 most likely to be
-// silently wrong. Split out, that trap is a three-line unit test; folded
-// into the producer it could only be inferred from timing behaviour.
+// Built before the measurement window opens and fixed from then on. If
+// the producer instead worked out each send time when it reached the
+// record, a stall would slide the schedule along with it and never show
+// up as latency: coordinated omission.
 struct ReplaySchedule {
-    // Offsets from t0 rather than absolute times, so the schedule stays a
-    // pure function of its inputs and is identical across runs.
+    // Offsets from t0 rather than absolute times, so the schedule depends
+    // only on its inputs and is identical across runs.
     std::vector<std::uint64_t> intended_offset_ns;
 
-    // Capture timestamps come from Python's time.time_ns() — wall clock,
-    // NTP-disciplined, and therefore able to step backwards mid-capture
-    // (§6.1a). Both counters are reported, never silently swallowed.
+    // Capture timestamps come from Python's time.time_ns(), NTP-disciplined
+    // wall time that can step backwards mid-capture. The steps are counted
+    // rather than hidden: run_replay copies backwards_steps into
+    // ReplayStats, though no C++ code prints either count.
+    // tools/inspect_capture.py reports both for a capture file, and both
+    // committed captures have none.
     std::uint64_t backwards_steps = 0;
     std::uint64_t clamped_ns = 0;
 
@@ -37,51 +43,32 @@ struct ReplaySchedule {
 };
 
 
-// Replays the captured inter-arrival gaps, optionally compressed.
-//
-// §6.1a rule 4, and the reason it is written the way it is:
+// Replays the captured inter-arrival gaps, each divided by `compression`
+// and truncated after the clamp:
 //
 //     gap[n] = (capture[n] >= capture[n-1]) ? capture[n] - capture[n-1] : 0
 //     offset[n] = offset[n-1] + gap[n]
 //
-// Two things about that form are load-bearing.
+// The clamp is an explicit comparison, never max(0, b - a). The
+// timestamps are uint64_t, so b - a wraps instead of going negative and
+// the max does nothing. With that clamp the gaps sum, mod 2^64, to
+// capture[n] - capture[0]: the schedule steps back by the size of each
+// correction, so the record after one is already overdue when the
+// producer reaches it. An offset lands near 2^64, about 585 years ahead,
+// only for a record timestamped before the first. The backwards-step case
+// in test_replay_schedule.cpp fails on that version.
 //
-// **The clamp is an explicit comparison, never max(0, b - a).**
-// capture_wall_time_ns is uint64_t (§7.3), so the subtraction wraps
-// rather than going negative and max(0, ...) is a no-op: the backwards
-// step becomes a gap near 2^64 and passes straight through.
+// The offsets accumulate clamped gaps and are never computed as
+// (capture[n] - capture[0]) / compression, which would put back every
+// gap the clamp removed. The two forms are guaranteed to agree only at
+// compression 1.0 with no backwards steps: above 1.0 each gap is
+// truncated on its own, so the sum of the quotients can fall short of the
+// quotient of the sum.
 //
-// What that then does depends on the accumulation, and it is worth being
-// precise because the obvious guess is wrong. In the *endpoint* form it
-// is the ~585-year forward jump people expect. In the *cumulative* form
-// used here it is quieter and worse: adding a gap near 2^64 wraps the
-// accumulator back round, so the schedule steps *backwards* by exactly
-// the size of the NTP correction. A producer reading that offset believes
-// the message is already overdue and sends it immediately — pacing
-// destroyed, no visible symptom, no crash. Verified by rewriting the
-// clamp the wrong way and watching offset[2] come back as 700 instead of
-// 1000.
-//
-// The bug is invisible on any capture that happens to have no backwards
-// steps, which is exactly why it must be written correctly before anyone
-// checks.
-//
-// **The accumulation is cumulative, never an endpoint subtraction.**
-// offset[n] = (capture[n] - capture[0]) / C is not equivalent, because it
-// silently re-absorbs every gap the clamp removed. The two forms agree
-// only when backwards_steps is zero — which is a fact to assert at load
-// time, not to assume.
-//
-// `compression` divides every gap (§6.5 B2's time-compression mechanism).
-// 1.0 replays at captured pace. B2's factor is 38,791.
-//
-// **Precondition: `compression` must be positive and finite.** A value
-// that is not — zero, negative, NaN, or infinite — aborts. It previously
-// fell back to 1.0 silently, which meant a caller asking for a
-// four-order-of-magnitude compression and getting captured pace instead,
-// with nothing in the returned object to say so. The reasoning for
-// aborting rather than returning a status is in the .cpp, and it is the
-// same reasoning run_replay's three preconditions already use.
+// `compression` must be positive and finite, or the call aborts; the .cpp
+// gives the reasoning, which is run_replay's too. 1.0 replays at captured
+// pace. B2's analysis fixed its factor at 38,791, and the burst-replay arm
+// that would call this with it was not run.
 //
 // An empty slice is not an error and returns an empty schedule.
 ReplaySchedule build_replay_schedule(
@@ -90,22 +77,17 @@ ReplaySchedule build_replay_schedule(
 );
 
 
-// A fixed offered rate, which is what B1's load sweep uses: the captured
-// gaps are ignored entirely and messages are paced at a chosen rate so
-// latency can be plotted against offered load (§6.4).
+// A fixed offered rate, which B1's load sweep uses: the captured gaps are
+// ignored and records are paced at rate_hz, so latency can be plotted
+// against offered load.
 //
-// offset[i] is computed from i rather than accumulated, so rounding error
-// cannot drift across two million records.
+// offset[i] is computed from i rather than accumulated, so rounding
+// cannot drift across harness_b's two million records.
 //
-// **Precondition: `rate_hz` must be positive and finite.** A value that
-// is not aborts. The previous fallback was the worse of the two this
-// file used to have: it resized the offset vector *before* testing the
-// rate, so it returned `count` offsets all equal to zero — not an empty
-// schedule but a structurally valid instruction to send every record at
-// t0. A driver that stamps its requested rate into a results file
-// alongside that run publishes an offered rate the run never delivered,
-// which is the failure §6.4's coordinated-omission machinery exists to
-// prevent.
+// `rate_hz` must be positive and finite, or the call aborts. The fallback
+// this replaced returned `count` offsets of zero, a schedule that sends
+// every record at t0, and the caller would have labelled that run with the
+// rate it asked for.
 //
 // `count == 0` is not an error and returns an empty schedule.
 ReplaySchedule build_fixed_rate_schedule(
