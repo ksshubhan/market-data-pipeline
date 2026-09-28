@@ -1,3 +1,25 @@
+// Harness C: a correctness stress test for the SPSC ring buffer, with a
+// sequence-number oracle. It measures no time.
+//
+// Usage: harness_c [dense_iterations]     (default 100,000,000)
+//
+// Two phases, each with one producer and one consumer thread:
+//
+//   dense  capacity 1024, and the producer retries every rejected push,
+//          so nothing may be lost. The consumer checks every record
+//          arrives in order with every field intact.
+//
+//   drop   capacity 8, and the producer abandons a record the queue
+//          rejects (drop-newest), so gaps in the sequence are legal. The
+//          consumer checks sequence numbers only ever increase, and at
+//          the end the gaps it saw must add up exactly to the records the
+//          producer dropped, and to the queue's own rejection count.
+//
+// Exits 0 and prints the counts if both phases pass; exits 1 at the first
+// failure. The committed results are results/harness_c_*.txt; the README
+// runs it with 2,000,000,000. Not a ctest entry, because of its run time.
+// See ARCHITECTURE.md.
+
 #include "record.hpp"
 #include "spsc_ring_buffer.hpp"
 
@@ -33,6 +55,9 @@ using DropQueue = SpscRingBuffer<
     SpscMemoryOrder::AcquireRelease
 >;
 
+// Every field, including symbol_id and the reserved bytes, is derived
+// from the sequence number, so a record assembled from two different
+// writes cannot match what make_record(sequence) gives for either.
 Record make_record(std::uint64_t sequence)
 {
     Record record{};
@@ -251,6 +276,8 @@ bool run_drop_phase()
 
     std::atomic<bool> start{false};
     std::atomic<bool> failed{false};
+    // The consumer is held back until the producer has filled the queue
+    // and forced its first drops, so those drops are deterministic.
     std::atomic<bool> consumer_go{false};
     std::atomic<bool> consumer_has_popped{false};
     std::atomic<bool> producer_done{false};
@@ -295,6 +322,8 @@ bool run_drop_phase()
                 }
             }
 
+            // Drops make gaps legal, but a repeat or a decrease is never
+            // legal under any drop policy.
             if (
                 observed.sequence <
                 next_expected_sequence
@@ -384,7 +413,8 @@ bool run_drop_phase()
             ++pushes_completed;
         }
 
-        // These must be rejected and abandoned.
+        // The queue is now full and the consumer has not started, so each
+        // of these must be rejected; each is abandoned and counted.
         for (
             std::uint64_t i = 0;
             i < kForcedDrops;
@@ -419,6 +449,9 @@ bool run_drop_phase()
             std::memory_order_release
         );
 
+        // Wait until the consumer is really running, so the rest of the
+        // phase is genuinely concurrent rather than the producer racing
+        // through it alone and dropping nearly everything.
         while (!consumer_has_popped.load(
             std::memory_order_acquire
         )) {
@@ -467,6 +500,9 @@ bool run_drop_phase()
         return false;
     }
 
+    // Records dropped after the last delivered one leave no gap between
+    // delivered records, so they are added here. Without this term the
+    // reconciliation below would miss drops at the end of the run.
     if (next_expected_sequence < kDropIterations) {
         observed_gap_records +=
             kDropIterations -
@@ -570,6 +606,8 @@ int main(int argc, char* argv[])
         const unsigned long long parsed =
             std::strtoull(argv[1], &end, 10);
 
+        // strtoull accepts a leading minus sign and wraps the value round,
+        // so "-1" would parse as a huge number; it is rejected explicitly.
         if (
             end == argv[1] ||
             *end != '\0' ||
