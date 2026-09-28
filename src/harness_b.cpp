@@ -1,47 +1,47 @@
-// harness_b — the B1 load sweep (§6.4, §6.5).
+// Harness B: the B1 load sweep, the full pipeline under controlled load.
+//
+// Usage: harness_b <git-commit-40-hex> <dirty:0|1> <capture.bin> <SYMBOL>
+//                  [consumer:book|timestamp] [passes|dump] [spin:1000|8192]
+//        harness_b ... [consumer] spin-sweep
 //
 // Replays a fixed slice of the capture at a series of fixed offered
 // rates, through each queue arm in turn, and records the end-to-end
-// latency distribution at each point. The output is the latency-vs-load
-// curve §10 calls one of the two graphs that carry the repo, and the X
-// and Y in the CV line come from it.
+// latency distribution at each point. The output CSV in results/ is the
+// source of the latency-vs-load graph and the headline p99 comparison;
+// tools/analyse_harness_b.py turns it into both. Two diagnostic modes,
+// spin-sweep and dump, are described where they run in main.
 //
 // What makes this a measurement rather than a throughput test is that the
 // send schedule is computed before the clock starts and latency is
-// measured from the *intended* send time (§6.4). A harness that pushed as
+// measured from the *intended* send time. A harness that pushed as
 // fast as the consumer could drain would stall the producer whenever the
 // system stalled, so the stall would never appear in any latency — that
 // is coordinated omission, and it is the single most common way this
 // benchmark is got wrong.
 //
 // Two arms, one interface. SpscRingBuffer and MutexQueue both expose
-// try_push/try_pop with identical reject-newest semantics (§4), so the
+// try_push/try_pop with identical reject-newest semantics, so the
 // producer loop is the same code for both and the comparison is between
 // implementations rather than between behaviours.
 //
 // ---------------------------------------------------------------------
-// Two decisions taken here that depart from the plan as written
+// Two decisions worth stating
 // ---------------------------------------------------------------------
 //
-// 1. Sample is 16 bytes, not the 24 §6.4b specifies, because queue depth
-//    is not recorded at run time.
+// 1. Sample is 16 bytes, and queue depth is not recorded at run time.
 //
-//    §6.4b calls depth "free — tail - head is already in registers at
-//    dequeue". That is true only inside try_pop; from outside, reading
-//    the producer's index is a cross-core load the consumer would
-//    otherwise not make, once per message. It is not free, and it is
-//    least free on the arm whose pop is a dozen instructions, so it would
-//    tax the two arms unequally in the same way §replay_producer.hpp
-//    refuses virtual dispatch for.
+//    Depth looks free, since tail - head is in registers inside try_pop.
+//    From outside the queue, though, reading the producer's index is a
+//    cross-core load the consumer would otherwise not make, once per
+//    message. It is least free on the arm whose pop is a dozen
+//    instructions, so it would tax the two arms unequally, the same
+//    reason replay_producer.hpp refuses virtual dispatch.
 //
 //    It is also unnecessary. Depth at any instant is (messages sent by t)
-//    minus (messages dequeued by t), and both series are already
-//    recoverable: the send schedule is a pure function of index and every
-//    dequeue timestamp is recorded. The depth-vs-time graph §6.4b wants
-//    is reconstructible offline, exactly, with no hot-path cost.
-//
-//    §6.4b needs amending to match. Recorded here rather than left as a
-//    silent divergence.
+//    minus (messages dequeued by t), and both series are recoverable: the
+//    send schedule is a pure function of index and every dequeue
+//    timestamp is recorded. A depth-vs-time graph is reconstructible
+//    offline, exactly, with no hot-path cost.
 //
 // 2. The consumer updates a book rather than only timestamping.
 //
@@ -94,16 +94,16 @@ namespace {
 
 // ---------------------------------------------------------------------
 // Fixed parameters, all decided before the first run so none of them can
-// be chosen after seeing which values flatter a result (§6.4's rule for
-// the lag threshold, applied to everything here).
+// be chosen after seeing which values flatter a result, the same rule as
+// for the lag threshold.
 // ---------------------------------------------------------------------
 
-// §6.4b: 2,000,000 puts roughly 200 samples behind p99.99 and the sample
+// 2,000,000 puts roughly 200 samples behind p99.99 and the sample
 // buffer at 32 MB, small enough not to compete with the 734 MiB dataset
 // for memory on a 16 GB machine.
 constexpr std::size_t kSliceLength = 2'000'000;
 
-// Capacity, decided 4 Sep before any B run.
+// Capacity, decided before any B run.
 //
 // The criterion: the smallest power of two such that dropped_records is
 // zero at every offered rate below the knee and the maximum reconstructed
@@ -117,20 +117,18 @@ constexpr std::size_t kSliceLength = 2'000'000;
 // falling from 1.400 at 5 MB to 1.359 at 80 MB.
 //
 // 16384 slots is 1.31 MB of Record. At 1M/s it absorbs a 16 ms consumer
-// stall before rejecting, against the ~9 us context switches §6.3 found
-// and the ~1.3 us park/wake measured for the condvar. Three orders of
-// margin.
+// stall before rejecting, against context switches of a few to a few tens
+// of microseconds seen in timer calibration and the ~1.3 us park/wake
+// measured for the condvar. Three orders of margin.
 //
-// If the pilot shows depth above 8192 anywhere below the knee, the answer
-// is 32768 and a re-run, not a softened criterion.
+// The criterion was met: zero dropped records at every rate on every arm.
 constexpr std::size_t kCapacity = 16384;
 
 // Half-decade log spacing. All are far below measure_pacing_floor's ~50M
 // records/s producer ceiling, so the producer is never the limiting
 // factor anywhere in the sweep. Log spacing because the expected shape is
 // flat then hockey-stick, and equal resolution per decade is what finds
-// the knee. Points to resolve the knee get added after the pilot shows
-// where it is, not guessed now.
+// the knee.
 constexpr double kRates[] = {
     100'000.0,
     250'000.0,
@@ -183,7 +181,8 @@ const char* consumer_mode_name(ConsumerMode mode) noexcept
 }
 
 
-// Same clock, same call path, as §6.3 calibrated and harness_a uses.
+// Same clock, same call path, as timer calibration measured and harness_a
+// uses. The Linux branch exists only so the file compiles there.
 std::uint64_t now_ns() noexcept
 {
 #if defined(__APPLE__)
@@ -197,6 +196,8 @@ std::uint64_t now_ns() noexcept
 }
 
 
+// The SPSC consumer's wait when the queue is empty: a CPU hint that this
+// is a spin loop, not a pause of any length.
 void cpu_relax() noexcept
 {
 #if defined(__aarch64__)
@@ -210,14 +211,14 @@ void cpu_relax() noexcept
 
 
 // ---------------------------------------------------------------------
-// Consumer sample — raw, not derived (§6.4b)
+// Consumer sample: raw, not derived
 // ---------------------------------------------------------------------
 //
 // The dequeue timestamp is stored rather than a computed latency. Latency
 // is recoverable offline from `sequence` via the known schedule, and the
 // raw timestamp additionally answers *where in the run* the tail samples
-// fell — which is what turns "p99.9 is 40 us" into "the p99.9 samples
-// cluster at 1.2 s intervals, which is thermal".
+// fell, which is what turns "p99.9 is 40 us" into a statement about
+// what caused it.
 struct Sample {
     std::uint64_t sequence;
     std::uint64_t dequeue_ns;
@@ -228,7 +229,7 @@ static_assert(std::is_trivially_copyable_v<Sample>);
 
 
 // What a bookTicker consumer actually does. The stream is a complete
-// statement of top-of-book (§7.1), so an update is four stores, not a
+// statement of top-of-book, so an update is four stores, not a
 // merge into a book structure.
 struct BookState {
     std::int64_t bid_price = 0;
@@ -244,7 +245,7 @@ struct BookState {
 // Buffers, allocated once and reused across every datapoint
 // ---------------------------------------------------------------------
 //
-// §6.4b: preallocated and pre-touched before the clock starts, with an
+// Preallocated and pre-touched before the clock starts, with an
 // observable side effect, or the touch loop is dead code at -O2 and the
 // first traversal takes page faults inside the measured window.
 struct RunBuffers {
@@ -272,7 +273,7 @@ struct RunBuffers {
 // ---------------------------------------------------------------------
 //
 // MutexQueue carries a blocking entry point that SpscRingBuffer does not,
-// and that asymmetry is the point rather than a defect: §4's bounded spin
+// and that asymmetry is the point rather than a defect: the bounded spin
 // then condvar wait is the tuning that makes the baseline fair, and it
 // belongs to the baseline's *consumer*, not to try_pop. Detected here by
 // interface rather than by an arm enum, so the two paths cannot drift
@@ -306,16 +307,13 @@ void consume(
 
     Record record{};
 
-    // One handling path, reached however the record was obtained.
-    //
-    // The first version of this loop had a separate final-drain branch
-    // that recorded the sample but skipped the book update. That branch
-    // is reachable: the top-of-loop pop can fail on a momentarily empty
-    // queue, the producer can then push its last records and set
-    // producer_done, and the drain pop succeeds. book.update_count would
-    // then disagree with delivered and the consistency check below would
-    // abort the run — rarely, and only under timing that a short test
-    // would never produce.
+    // One handling path, reached however the record was obtained. A
+    // separate final-drain path is reachable: the top-of-loop pop can fail
+    // on a momentarily empty queue, the producer can then push its last
+    // records and set producer_done, and the drain pop succeeds. Any
+    // difference in how that record was handled would make
+    // book.update_count disagree with delivered, rarely, and only under
+    // timing a short test would never produce.
     for (;;) {
         if (!queue.try_pop(record)) {
             if (producer_done.load(std::memory_order_acquire)) {
@@ -492,7 +490,7 @@ Datapoint run_datapoint(
     producer.join();
     consumer.join();
 
-    // §8.0b: a run whose QoS did not apply is not the run being reported.
+    // A run whose QoS did not apply is not the run being reported.
     const QosResult qos = combine_qos(producer_qos, consumer_qos);
 
     if (qos != QosResult::applied) {
@@ -517,7 +515,7 @@ Datapoint run_datapoint(
         point.parks = queue->parks();
     }
 
-    // §7.7a: under drop-newest with no retry every rejection is a drop,
+    // Under drop-newest with no retry every rejection is a drop,
     // so these must agree. They are separate counters owned by different
     // layers, and this is the one place their equality is checkable.
     if (stats.full_rejections != stats.dropped_records) {
@@ -537,9 +535,9 @@ Datapoint run_datapoint(
         std::exit(1);
     }
 
-    // Latency, computed offline from raw timestamps (§6.4b). The schedule
-    // is indexed by sequence because first_sequence is zero here; the
-    // general mapping is §7.3a's.
+    // Latency, computed after the run from raw timestamps. The schedule is
+    // indexed by sequence directly because first_sequence is zero here;
+    // replay_producer.hpp gives the general mapping.
     std::vector<std::uint64_t> latencies;
     latencies.reserve(delivered);
 
@@ -562,16 +560,16 @@ Datapoint run_datapoint(
         latencies.push_back(sample.dequeue_ns - intended);
     }
 
-    // §6.4b's actual reason for storing raw dequeue timestamps rather
-    // than computed latencies: the raw form answers *where in the run*
+    // The reason for storing raw dequeue timestamps rather than
+    // computed latencies: the raw form answers *where in the run*
     // the tail samples fell. Percentiles alone cannot distinguish a cost
     // that recurs every N messages from one that recurs every T
     // microseconds, and those have completely different causes.
     //
-    // Only samples above the threshold are written. At p99.9 that is
-    // ~2000 rows out of 2,000,000, which is a small file rather than a
-    // 60 MB one, and the sub-threshold samples carry no information
-    // about the tail.
+    // Only samples of 1 us or more are written; the rest carry no
+    // information about the tail. For the SPSC arm that is under 1% of
+    // rows. For the tuned baseline at low rates it can be half of them,
+    // because its consumer parks.
     if (dump_path != nullptr) {
         std::ofstream dump(dump_path, std::ios::app);
 
@@ -603,9 +601,9 @@ Datapoint run_datapoint(
     point.p9999_ns = percentile_of(latencies, 0.9999);
     point.max_ns = latencies.empty() ? 0 : latencies.back();
 
-    // §6.4's two gates.
+    // The two validity gates.
     //
-    // Drop gate: any dropped record voids the datapoint (§7.7). Dropping
+    // Drop gate: any dropped record voids the datapoint. Dropping
     // is cheaper than delivering, so an arm that drops looks faster.
     //
     // Lag gate: p99 producer lag must stay under one offered-rate period.
@@ -628,7 +626,7 @@ Datapoint run_datapoint(
 
 
 // ---------------------------------------------------------------------
-// Provenance — same convention as harness_a and convert_capture (§7.6)
+// Options, including caller-supplied provenance as in harness_a
 // ---------------------------------------------------------------------
 
 struct Options {
@@ -642,8 +640,8 @@ struct Options {
     bool dump_samples = false;
 
     // Which baseline configuration the full sweep runs. Both are
-    // reported: 8192 is the tuned baseline §4 requires, 1000 is the
-    // parking configuration §3 describes as catastrophic on the tail.
+    // reported: 8192 is the tuned baseline, 1000 is the configuration that
+    // parks the consumer and shows what blocking costs on the tail.
     // Neither alone is the result.
     int spin = 8192;
 };
@@ -804,11 +802,12 @@ int main(int argc, char* argv[])
 
     const std::span<const CaptureRecord> slice = all.subspan(0, kSliceLength);
 
-    // §6.4a. Warm, then prove the warming worked by comparing two full
-    // traversals. The measured floor for that ratio is ~1.2, not 1.0 —
-    // the residual is cache warming on the first pass, which no amount of
-    // page-touching removes. A threshold of 1.0 would send you chasing a
-    // phantom.
+    // Warm the mapping, then time two traversals of the slice and record
+    // their ratio, so the output shows whether any paging was left. For
+    // the full 13.7M-record file the ratio's floor is about 1.2, from cache
+    // warming on the first pass; for this 2M-record slice both laps stream
+    // from DRAM and about 1.0 is expected. The note written into the output
+    // says the same.
     const std::uint64_t warm_begin = now_ns();
     volatile std::uint64_t warm_sink = capture.warm();
     const std::uint64_t warm_end = now_ns();
@@ -851,43 +850,27 @@ int main(int argc, char* argv[])
     // Spin-sweep diagnostic
     // ---------------------------------------------------------------
     //
-    // The first pilot showed the baseline arm failing §6.4's p99 lag gate
-    // at every rate at or above 500k, with lag roughly constant at 2.7-5.3
-    // us while the gate shrinks with the period. A roughly fixed cost on a
-    // small fraction of pushes is the shape of an occasional syscall, and
-    // the candidate is notify_one waking a parked consumer: that is a
-    // __ulock_wake on the producer's critical path, charged to the
-    // producer's own schedule.
+    // Runs the baseline at three spin budgets and records parks, signals
+    // and producer lag for each. It tests whether the baseline's producer
+    // lag comes from notify_one waking a parked consumer, a syscall on the
+    // producer's critical path. If so, raising the spin budget reduces
+    // parks and lag together; if lag stays put while parks collapse, the
+    // cost is the lock itself.
     //
-    // If that is the mechanism, raising the spin budget should reduce
-    // parks, reduce signals-that-block, and reduce producer lag together.
-    // If lag does not move while parks collapse, the cost is lock
-    // contention rather than wakeups and the baseline's ceiling is real.
-    //
-    // Either answer is worth having before spending three passes. The
-    // counters make this direct evidence rather than an inference from
-    // the lag distribution.
-    //
-    // Note this also bears on §4's spin derivation. measure_condvar_wakeup
-    // optimised the *waiter's* cost in isolation and omitted the cost
-    // blocking imposes on the *signaller*. If parking is expensive for the
-    // producer, the ski-rental balance point is higher than 1000 and the
-    // constant needs revising with that term included.
+    // At 1M/s the wake cost dominated, which is why the tuned baseline
+    // spins 8192 rather than the 1000 that measure_condvar_wakeup derived
+    // from the waiter's cost alone. Above about 2.5M/s lag did not move,
+    // so there the cost is the lock. The README's spin-count section has
+    // the numbers.
     // ---------------------------------------------------------------
     // Tail-sample dump
     // ---------------------------------------------------------------
     //
-    // The first three-pass sweep showed the SPSC arm at 83 ns p50, 125 ns
-    // p99, and ~12,000 ns p99.9 — two orders of magnitude between
-    // adjacent percentiles, at the same value whether the run lasted 20 s
-    // or 0.2 s. Nothing in a wait-free push and pop costs 12 us on one
-    // message in a thousand, so the cost is outside the queue. The same
-    // floor appears in both baseline configurations, so it is added to
-    // everything and it is what compresses the p99.9 comparison to 1.6x
-    // while p99 shows 3-27x.
-    //
-    // Two hypotheses with different signatures, which is why this dumps
-    // rather than guesses:
+    // Writes every slow sample, at two rates, so the cause of the ~12 us
+    // p99.9 floor that both arms share can be identified. Nothing in a
+    // wait-free push and pop costs 12 us on one message in a thousand, so
+    // the cost is outside the queue. Two hypotheses have different
+    // signatures:
     //
     //   Per-message  — something recurring every N records, e.g. the
     //                  sample buffer crossing a 16 KiB page every 1024
@@ -902,7 +885,9 @@ int main(int argc, char* argv[])
     //
     // Running the same arm at 100k and 1M separates them: a 10x change in
     // rate leaves index spacing unchanged under the first hypothesis and
-    // changes it 10x under the second.
+    // changes it 10x under the second. tools/analyse_tail_samples.py does
+    // the analysis; the result was per-time, the scheduler, and the
+    // README's scheduler-floor section records it.
     if (options.dump_samples) {
         const std::string dump_path =
             "results/tail_samples_" + utc_timestamp() + ".csv";
@@ -965,7 +950,7 @@ int main(int argc, char* argv[])
 
     for (std::size_t pass = 0; pass < sweep_passes; ++pass) {
         for (std::size_t r = 0; r < kRateCount; ++r) {
-            // §5: alternate which arm runs first on each pass, so
+            // Alternate which arm runs first on each pass, so
             // thermal drift on a fanless M2 does not load onto whichever
             // arm always ran second.
             const bool spsc_first = (pass % 2 == 0);
