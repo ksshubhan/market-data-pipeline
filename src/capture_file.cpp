@@ -1,3 +1,16 @@
+// Implementation of CaptureFile, the reader for the .bin capture format.
+//
+// open() maps a .bin read-only, validates every header field once, and
+// checks the record array's alignment; on success the records are exposed
+// as a span over the mapping, with no copy. warm() touches every page so
+// the file is in memory before a measurement starts. The format itself,
+// the error codes and the public contract are in capture_file.hpp; the
+// converter that writes these files is convert_capture.cpp.
+//
+// POSIX file and memory-mapping calls throughout. On macOS the page size
+// is cross-checked with sysctl; elsewhere that check is skipped. See
+// ARCHITECTURE.md.
+
 #include "capture_file.hpp"
 
 #include <cerrno>
@@ -8,9 +21,9 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-// sysctlbyname is a BSD/Darwin interface. §5 keeps a Linux ARM64 VM for
-// portability validation, so the sysctl cross-check is compiled only
-// where it exists and page_size_agrees() reports false elsewhere.
+// sysctlbyname is a BSD/Darwin interface. The code also builds on Linux
+// ARM64, so the sysctl cross-check is compiled only where it exists and
+// page_size_agrees() reports false elsewhere.
 #if defined(__APPLE__)
 #include <sys/sysctl.h>
 #endif
@@ -18,11 +31,11 @@
 
 namespace {
 
-// §7.6a trap 3: Apple Silicon uses 16 KiB pages. Both APIs are read and
-// cross-checked rather than one being trusted, and the verified value is
-// what the warming loop steps by. Stepping 4096 would be harmless but
-// would do four times the work, and any future count of faults would be
-// off by four.
+// Returns the page size warm() steps by, and sets agrees only when both
+// APIs answered and gave the same value. Apple Silicon uses 16 KiB pages,
+// not 4 KiB, so the value is read from both APIs and cross-checked rather
+// than assumed. Stepping by 4 KiB would still touch every page, at four
+// times the work.
 std::size_t query_page_size(bool& agrees) noexcept
 {
     const long from_sysconf = sysconf(_SC_PAGESIZE);
@@ -59,10 +72,10 @@ std::size_t query_page_size(bool& agrees) noexcept
 }
 
 
-// Validates the 64-byte header in the order §7.6a specifies. magic and
-// format_version are checked before anything else, including header_size:
-// every later check is only meaningful once the file is known to be this
-// format at this version.
+// Checks every header field and returns the first failure, or none.
+// magic and format_version are checked before anything else, including
+// header_size: every later check is only meaningful once the file is
+// known to be this format at this version.
 CaptureFileError validate_header(
     const BinaryHeader& header,
     std::string_view expected_symbol,
@@ -103,9 +116,9 @@ CaptureFileError validate_header(
         return CaptureFileError::unknown_stream_type;
     }
 
-    // §7.1: depth is captured and kept on disk but deliberately not
-    // parsed. A depth .bin is a recognised file this code refuses to
-    // read, which is different from an unrecognised one.
+    // Depth is captured and kept on disk but deliberately not parsed. A
+    // depth .bin is a recognised file this code refuses to read, which is a
+    // different error from an unrecognised one.
     if (header.stream_type !=
         static_cast<std::uint8_t>(StreamType::book_ticker)) {
         return CaptureFileError::unsupported_stream_type;
@@ -120,7 +133,7 @@ CaptureFileError validate_header(
     }
 
     // The symbol must be null-terminated inside its 16 bytes, so at most
-    // 15 usable characters (§7.6).
+    // 15 usable characters.
     std::size_t symbol_length = 0;
 
     while (symbol_length < sizeof(header.symbol) &&
@@ -138,16 +151,17 @@ CaptureFileError validate_header(
         return CaptureFileError::symbol_mismatch;
     }
 
-    // Rejected explicitly rather than falling out of the size check, so
-    // an interrupted conversion reports as incomplete rather than as a
-    // size mismatch (§7.6).
+    // The converter writes this placeholder first and patches the real count
+    // last, so seeing it means the conversion never finished. Rejected
+    // explicitly rather than falling out of the size check, so an
+    // interrupted conversion reports as incomplete, not as a size mismatch.
     if (header.record_count == kUnfinalizedRecordCount) {
         return CaptureFileError::unfinalized_record_count;
     }
 
-    // Guard the multiply before performing it. record_count is attacker-
-    // controlled in the sense that it comes off disk; the file-size check
-    // below is only sound if the product cannot wrap.
+    // Guard the multiply before performing it. record_count comes off disk
+    // and cannot be trusted, and the file-size check below is only sound if
+    // the product cannot wrap.
     const std::uint64_t max_records =
         (std::numeric_limits<std::uint64_t>::max() - kCaptureHeaderSize) /
         sizeof(CaptureRecord);
@@ -170,6 +184,8 @@ CaptureFileError validate_header(
 } // namespace
 
 
+// The final return is reached only for a value outside the enum; it keeps
+// the function well-defined and the compiler quiet.
 const char* capture_file_error_name(CaptureFileError error) noexcept
 {
     switch (error) {
@@ -227,6 +243,8 @@ CaptureFile::~CaptureFile()
 }
 
 
+// Moves leave the source empty (base_ null), so its destructor unmaps
+// nothing and the mapping is released exactly once.
 CaptureFile::CaptureFile(CaptureFile&& other) noexcept
     : base_(other.base_),
       mapped_size_(other.mapped_size_),
@@ -266,6 +284,8 @@ void CaptureFile::reset() noexcept
 }
 
 
+// On any failure, out is left empty and every descriptor and mapping this
+// call created has been released.
 CaptureFileError CaptureFile::open(
     const char* path,
     std::string_view expected_symbol,
@@ -294,6 +314,8 @@ CaptureFileError CaptureFile::open(
         return CaptureFileError::file_smaller_than_header;
     }
 
+    // Read-only and private: nothing here writes the file, and a private
+    // mapping could never write changes back to it.
     void* mapping = ::mmap(
         nullptr,
         file_size,
@@ -303,7 +325,8 @@ CaptureFileError CaptureFile::open(
         0
     );
 
-    // The mapping outlives the descriptor.
+    // Closing the descriptor does not end the mapping; it stays valid until
+    // munmap.
     ::close(fd);
 
     if (mapping == MAP_FAILED) {
@@ -312,6 +335,8 @@ CaptureFileError CaptureFile::open(
 
     const std::uint8_t* base = static_cast<const std::uint8_t*>(mapping);
 
+    // Copied into a real BinaryHeader for validation. memcpy into an object
+    // is well-defined, unlike reading the mapped bytes through a cast.
     BinaryHeader header = {};
     std::memcpy(&header, base, sizeof(header));
 
@@ -323,9 +348,9 @@ CaptureFileError CaptureFile::open(
         return error;
     }
 
-    // §7.6a trap 2: assert the alignment rather than relying on it. mmap
-    // returns a page-aligned address and the header is a multiple of
-    // alignof(CaptureRecord), so this holds — as a checked fact.
+    // Checked rather than assumed. mmap returns a page-aligned address and
+    // the header size is a multiple of alignof(CaptureRecord), so this
+    // cannot fail today; the check makes that a verified fact.
     if (reinterpret_cast<std::uintptr_t>(base + kCaptureHeaderSize) %
             alignof(CaptureRecord) != 0) {
         ::munmap(mapping, file_size);
@@ -342,11 +367,10 @@ CaptureFileError CaptureFile::open(
 
 const BinaryHeader& CaptureFile::header() const noexcept
 {
-    // §7.6a trap 1: forming a BinaryHeader reference over mapped bytes is
-    // formally undefined in C++20 because no object lifetime has begun
-    // there. std::start_lifetime_as is the C++23 fix. It works on every
-    // real implementation, and the correct move is to do it and name the
-    // problem rather than pretend it is not there.
+    // Forming a BinaryHeader reference over mapped bytes is formally
+    // undefined in C++20, because no object's lifetime has begun there;
+    // std::start_lifetime_as is the C++23 fix. It works on every real
+    // implementation, and is done here knowingly.
     return *reinterpret_cast<const BinaryHeader*>(base_);
 }
 
@@ -370,6 +394,9 @@ std::uint64_t CaptureFile::warm() const noexcept
         return 0;
     }
 
+    // One byte per page is enough to fault the whole page in. The sum is
+    // returned so the reads have a visible result: a loop whose reads are
+    // thrown away is dead code at -O2 and would be deleted.
     std::uint64_t sink = 0;
 
     for (std::size_t offset = 0;
