@@ -1,3 +1,24 @@
+// measurement_thread.hpp: asks macOS to run the calling thread on a P-core,
+// and reports whether the request took.
+//
+// Used by every timed program: harness_a, harness_b,
+// measure_condvar_wakeup, measure_pacing_floor and measure_parse_cost.
+// Each refuses to report a run unless the result is `applied`.
+//
+// macOS has no thread pinning (no taskset, no isolcpus), and the M2's P-
+// and E-cores differ enough that a thread moved mid-run changes the number.
+// QOS_CLASS_USER_INTERACTIVE biases a thread toward the P-cores. It is a
+// hint: it does not stop the scheduler migrating the thread, and reading
+// the class back confirms the class, not the core.
+//
+// Its effect on variance has not been isolated. The committed A1 runs
+// before and after it (30 Aug, 4 Sep) differ in date and code as well, and
+// while four of their five arms narrowed, queue_seq_cst widened.
+//
+// The class is read back after being set because a request that silently
+// did nothing is worse than not making it: the run would be reported as
+// mitigated when it was not.
+
 #pragma once
 
 #if defined(__APPLE__)
@@ -5,19 +26,6 @@
 #include <pthread/qos.h>
 #endif
 
-
-// §5: macOS offers no thread pinning — no taskset, no isolcpus — and the
-// M2's heterogeneous P/E cores mean the scheduler can migrate a
-// measurement thread mid-run. pthread_set_qos_class_self_np with
-// QOS_CLASS_USER_INTERACTIVE biases a thread toward the P-cores.
-//
-// This is a hint, not a guarantee, and must be described that way. It
-// reduces run-to-run variance; it does not eliminate it, and it does not
-// prevent migration.
-//
-// The class is read back after being set, because a request that silently
-// did nothing is worse than not making it: the run would be reported as
-// mitigated when it was not.
 
 enum class QosResult {
     // Deliberately the zero value, so a QosResult that was never assigned
@@ -83,12 +91,14 @@ inline const char* qos_result_name(QosResult result) noexcept
         return "unsupported";
     }
 
+        // Reached only by a value cast in from outside the enumerators.
     return "<unrecognised QosResult>";
 }
 
 
-// Worst-of, for combining the producer's and consumer's results into one
-// per-trial verdict. `applied` is the only acceptable outcome.
+// Applied only if both results are applied; otherwise the first result that
+// is not. The failures have no ordering, so this reports one reason, not
+// the most serious one.
 inline QosResult combine_qos(QosResult a, QosResult b) noexcept
 {
     return a == QosResult::applied ? b : a;
