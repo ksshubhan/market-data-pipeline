@@ -704,8 +704,8 @@ test occur on this machine.
 
 **The clean result means something because the control fires.** Running
 the deliberately-broken C1 arm in the same TSan build produces a data race
-naming `spsc_ring_buffer.hpp:130` (the payload read in `try_pop`) against
-`spsc_ring_buffer.hpp:100` (the payload store in `try_push`) — the two
+naming the payload read in `try_pop` against the payload store in
+`try_push`, both in `spsc_ring_buffer.hpp` — the two
 non-atomic accesses that acquire/release exists to order. Not the index:
 the payload. The report is committed at `evidence/c1_tsan_report.txt`.
 A "TSan clean" claim with no verified negative control says only that the
@@ -722,7 +722,7 @@ control, run in the same build as the suites it certifies.
 
 **The independent run is worth more than a third green tick, because the
 control agrees too.** GCC's ThreadSanitizer flags C1 at
-`spsc_ring_buffer.hpp:130` in `try_pop` against `:100` in `try_push` —
+the payload read in `try_pop` against the payload store in `try_push` —
 the same two non-atomic payload accesses LLVM named, not the index. Two
 detectors with no shared code identify the same race at the same two
 lines, and independently find nothing in the valid arms. The workload was
@@ -848,7 +848,7 @@ ctest --test-dir build/default --output-on-failure
 
 # ThreadSanitizer. All seven suites should pass. The C1 arm is the
 # negative control and must report data races naming
-# spsc_ring_buffer.hpp:130 against :100, the payload read and store.
+# the payload read in try_pop against the payload store in try_push.
 # The evidence is the report, not a tear: instrumentation changes the
 # timing, and the run may finish its 100,000,000 iterations without
 # observing one. On macOS the sanitizer runtime ends a run that
