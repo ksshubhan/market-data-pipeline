@@ -1,0 +1,27 @@
+experiment: b3_parse_cost
+git_commit: fd832a429e6a0fd035e6967489ec4cf14a38cf77
+git_dirty: no
+capture: captures/btcusdt_futures_bookTicker_20260820_130813.log
+symbol: BTCUSDT
+messages_per_round: 200000
+rounds: 20
+ring_capacity: 1024
+qos_class: user_interactive
+
+parse_ns_per_message: 170.815
+copy_ns_per_message: 1.14084
+handoff_ns_per_message: 6.05594
+
+parse_over_handoff: 28.2063
+parse_over_copy: 149.728
+
+# The handoff arm is single-threaded, so it pays no cross-core
+# coherence traffic and is a LOWER bound on a real handoff.
+# A1b's two-thread figure is ~30 ns. The lower bound is the
+# right comparison: if parse dominates the cheapest possible
+# handoff, it dominates the real one.
+#
+# This is a schema-specific key scanner, not a general JSON
+# parser. It assumes a known Binance bookTicker layout. A
+# generic JSON library would be considerably slower, so this
+# figure must not be quoted as the cost of 'JSON parsing'.
