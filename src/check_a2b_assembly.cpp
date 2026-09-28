@@ -1,3 +1,15 @@
+// A program built to be disassembled, not to measure anything. It wraps
+// the A2b and A3b inner loops from false_sharing.hpp in standalone
+// functions, so each loop appears in the binary under its own symbol.
+//
+// tools/make_a2b_evidence.py runs llvm-objdump on the built binary, finds
+// these functions by name, checks that every store loop has one release
+// store (stlr) per iteration and that each pair of A3b loops compiles to
+// the same instructions, and writes
+// evidence/a2b_a3b_arm64_disassembly_20260908.txt. Rename a function only
+// together with that script. Running the program is just a sanity check:
+// it exits 0 if the loops produce the expected values. See ARCHITECTURE.md.
+
 #include "false_sharing.hpp"
 
 #include <cstdint>
@@ -14,8 +26,10 @@
 // value correct.
 //
 // noinline so the loop survives as a standalone symbol to disassemble.
-// The three separations are instantiated because the loop body is the
-// same code in each arm; if they differ, the arms are not comparable.
+// All four separations are instantiated: 64, 128 and 256 are the arms
+// compared, and 16 is the control where both counters share a line. The
+// loop body must be the same code in each; if it differed, the arms would
+// not be comparable.
 
 __attribute__((noinline))
 void store_loop_64(SeparatedCounters<64>& counters, std::uint64_t count)
@@ -46,8 +60,8 @@ void store_loop_16(SeparatedCounters<16>& counters, std::uint64_t count)
 // be elided outright, and the harness checks the writer's final value.
 // They are disassembled anyway for the same reason as above: the checks
 // catch a loop that vanished, not one that was partially unrolled or
-// vectorised into fewer, wider accesses. The three strides must also
-// produce the same loop body, or the arms are not comparable.
+// vectorised into fewer, wider accesses. The two strides, 80 and 128,
+// must also produce the same loop body, or the arms are not comparable.
 
 __attribute__((noinline))
 void slot_write_80(AlignedSlot<8>& slot, std::uint64_t count)
@@ -77,6 +91,10 @@ std::uint64_t slot_read_128(
 }
 
 
+// Calls some of the functions once and checks their results. The others
+// are never called but have external linkage, so they are still compiled
+// and kept in the binary for disassembly. The slot reads feed the exit
+// status so their results are used.
 int main()
 {
     SeparatedCounters<64> counters{};
