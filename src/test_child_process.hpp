@@ -1,26 +1,24 @@
-#pragma once
+// test_child_process.hpp: run_in_child, which runs a function expected to
+// abort in a forked child and reports how the child ended.
+//
+// The preconditions in replay_schedule.cpp and replay_producer.hpp abort,
+// so their tests cannot run a failing case in-process. run_in_child forks,
+// points the child's stderr at a pipe, runs the body there, and returns
+// whether the child died of SIGABRT along with everything it wrote to
+// stderr. The test then checks which precondition fired: a check that any
+// abort satisfied would still pass if two guards were swapped.
+//
+// Only the process control is shared. Each test file keeps its own
+// wrapper, because the wrapper reports through that file's own check().
+//
+// Not ctest's WILL_FAIL property instead: it inverts the exit code, and
+// CMake's documentation says a signal abort may fail the test even with
+// WILL_FAIL set. std::abort ends the process with SIGABRT.
+//
+// Related: test_replay_schedule.cpp, test_replay_producer.cpp (its two
+// users).
 
-// Running a body that is expected to abort, in a forked child.
-//
-// Extracted from test_replay_producer.cpp when a second test binary
-// needed the same thing. The reporting wrapper stays in each test file,
-// because it calls that file's own check() and names that file's own
-// suite; only the process control is shared, and the process control is
-// the part with the subtlety in it.
-//
-// Preconditions abort, so they cannot be checked in-process directly.
-//
-// The first attempt registered separate ctest entries with WILL_FAIL.
-// That does not work and the reason is worth keeping: WILL_FAIL inverts a
-// non-zero *exit code*, but a process killed by a signal is classified by
-// ctest as "Subprocess aborted" — an exception, and exceptions fail
-// regardless of the property. std::abort raises SIGABRT, so it lands in
-// the one category WILL_FAIL cannot reach.
-//
-// Forking is better than a property anyway. The parent captures the
-// child's stderr and matches the diagnostic, so a test verifies *which*
-// precondition fired rather than merely that the process died — a check
-// that any abort satisfies would pass if the guards were swapped.
+#pragma once
 
 #include <sys/wait.h>
 #include <unistd.h>
@@ -48,6 +46,9 @@ inline ChildOutcome run_in_child(void (*body)())
         return outcome;
     }
 
+    // Call only while the process has one thread. The child gets a copy
+    // of the calling thread alone, so a lock another thread held at the
+    // fork would stay held in the child for good.
     const pid_t pid = fork();
 
     if (pid < 0) {
@@ -64,12 +65,18 @@ inline ChildOutcome run_in_child(void (*body)())
 
         body();
 
-        // Only reached if the precondition failed to fire.
+        // Only reached if the precondition failed to fire. _exit, not
+        // exit: exit would flush stdio buffers copied from the parent,
+        // which could print their contents a second time.
         _exit(0);
     }
 
+    // The parent's copy of the write end must be closed, or read() below
+    // never sees end-of-file.
     close(pipe_fds[1]);
 
+    // Read to end-of-file before waiting. A child that filled the pipe
+    // would block in write() while the parent blocked in waitpid().
     char buffer[512];
     ssize_t n = 0;
 
