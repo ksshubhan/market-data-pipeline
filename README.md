@@ -632,8 +632,13 @@ whichever ran last.
 There is no thread pinning on macOS. `QOS_CLASS_USER_INTERACTIVE` biases
 toward P-cores; it is a hint, not a guarantee. The class is **read back
 after being set** and the run aborts if it did not apply — a request that
-silently did nothing is worse than not making it. Applying it reduced
-within-arm spread on A1 from 21.1% to 5.0%.
+silently did nothing is worse than not making it. Its effect on variance
+has not been isolated. Between the 30 August A1 run without it and the
+4 September run with it, range over median fell from 21.1% to 5.0% on the
+acquire-release queue arm and narrowed on three of the other four arms,
+but widened on the `seq_cst` queue arm, from 15.8% to 16.2%. The two runs
+also differ in date and code, so this is consistent with the hint
+helping rather than proof that it does.
 
 ---
 
