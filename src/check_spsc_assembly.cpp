@@ -1,6 +1,23 @@
+// A program built to be disassembled, not to measure anything. It wraps
+// SpscRingBuffer's try_push and try_pop, for both the cached and the
+// uncached index arms, in standalone functions so each appears in the
+// binary under its own symbol.
+//
+// tools/make_spsc_evidence.py disassembles the built binary and checks
+// that the four functions contain eight ordered (acquire or release)
+// instructions in total, that no read-modify-write instruction (CAS,
+// exclusive load/store, swap, atomic add) appears anywhere in it, and
+// where each function's acquire load sits relative to its first branch.
+// It writes evidence/spsc_arm64_disassembly_20260908.txt. Rename a
+// function only together with that script. Running the program is a
+// sanity check: one record through each arm, exit 0 if it arrives
+// intact. See ARCHITECTURE.md.
+
 #include "record.hpp"
 #include "spsc_ring_buffer.hpp"
 
+// The default configuration: 128-byte alignment, acquire/release
+// ordering, cached indices.
 using Queue = SpscRingBuffer<Record, 1024>;
 
 // A4: the uncached arm should show an unconditional cross-core acquire
@@ -14,6 +31,7 @@ using UncachedQueue = SpscRingBuffer<
     SpscIndexCaching::Uncached
 >;
 
+// noinline so each call survives as a standalone symbol to disassemble.
 __attribute__((noinline))
 bool push_once(Queue& queue, const Record& record)
 {
