@@ -1,3 +1,23 @@
+// The offline converter: turns one capture .log into a .bin dataset.
+//
+// Usage: convert_capture <input.log> <output.bin> <symbol>
+//                        <git-commit-40-hex> <dirty:0|1> [--require-clean]
+//
+// Each input line is a capture timestamp, a tab, and one bookTicker JSON
+// message. Every line is parsed by parse_book_ticker (parser.cpp) into a
+// 56-byte CaptureRecord and appended after a 64-byte header, in the
+// format defined in capture_file.hpp. The symbol is always given
+// explicitly, never inferred from the filename. With --require-clean the
+// converter checks with git that the commit argument is HEAD and the tree
+// is clean before it starts.
+//
+// All or nothing: any malformed line aborts the run and publishes no
+// output. The file is built under a temporary name, its header read back
+// and checked, flushed to stable storage, and only then given its final
+// name, which it will never take from an existing file. Tested end to end
+// by test_convert_capture.cpp, which runs this binary as a child process.
+// Uses POSIX calls for the durability steps. See ARCHITECTURE.md.
+
 #include "capture_file.hpp"
 #include "parser.hpp"
 #include "record.hpp"
@@ -63,6 +83,10 @@ const char* parse_error_name(ParseError error) noexcept
 }
 
 
+// The whole of text must be an unsigned decimal number: no sign, no
+// spaces, nothing after the digits. from_chars stops at the first
+// non-digit, so checking that it consumed everything is what rejects
+// trailing junk.
 bool parse_uint64(
     std::string_view text,
     std::uint64_t& output
@@ -103,6 +127,7 @@ int hex_digit_value(char c) noexcept
 }
 
 
+// 40 hex characters into the raw 20-byte SHA-1 the header stores.
 bool parse_git_commit(
     std::string_view hex,
     std::uint8_t (&output)[20]
@@ -231,19 +256,16 @@ CommandOutput run_command(const char* command)
 // Verify that the git state the caller claims in the header is the git
 // state this process can actually observe.
 //
-// The converter has taken a commit SHA and a dirty flag as arguments
-// since rev 4 and has written both into the header without checking
-// either. Every invocation in this project's history passed dirty = 0,
-// including runs against a modified tree, so the field recording whether
-// a dataset came from a clean build has been recording only what the
-// caller asserted. A flag that merely refused when the caller admitted
-// to being dirty would check the one case that was never the problem.
+// The commit and dirty flag arrive as arguments and would otherwise be
+// written into the header unchecked, so the header could claim a clean
+// build that never happened. A check that only refused when the caller
+// admitted to being dirty would catch the one case that is not the
+// problem; this one asks git directly.
 //
-// The objection to this is that a file-format converter should not know
-// about git. The answer is that it has taken a git SHA as an argument
-// since it was designed, so that boundary was crossed then; verifying a
-// field it already writes is a smaller step than continuing to record
-// that field unverified.
+// The objection is that a file-format converter should not know about
+// git. It already takes a git SHA as an argument, so that boundary was
+// crossed when the header was designed; verifying a field it writes is a
+// smaller step than recording that field unverified.
 //
 // git runs in the working directory, which is the caller's choice and
 // the only defensible one — the input log and the output binary can each
@@ -351,12 +373,10 @@ bool verify_clean_tree(const std::string& expected_commit)
 // Report .tmp files left in the output directory by earlier runs
 // targeting this same output.
 //
-// Before the pid went into the name there was exactly one temporary
-// name per output, and the refuse-to-start check below doubled as the
-// thing that made an orphan impossible to ignore: the next run stopped
-// dead and named the file. With the pid in the name that check will
-// almost never fire again, so an orphan from a crashed run would sit in
-// the directory indefinitely with nothing to mention it.
+// Each run's temporary file carries its own pid, so a leftover from a
+// crashed run is never overwritten or noticed by a later one. Without this
+// scan it would sit in the directory indefinitely with nothing to mention
+// it.
 //
 // This warns rather than aborts, which is a deliberate exception to this
 // project's abort-rather-than-warn rule. Aborting would rebuild exactly
@@ -439,12 +459,9 @@ enum class PublishResult {
 //
 // std::filesystem::rename replaces unconditionally, and the
 // refuse-to-overwrite check near the top of main runs long before the
-// publish — hundreds of milliseconds on a real dataset — so two
-// converters given the same output path both pass it before either has
-// written anything, and both then rename, the later silently destroying
-// the earlier. Measured on forty concurrent runs against one output:
-// twelve published, eleven finished datasets were overwritten, and every
-// one of the twelve exited zero.
+// publish, so two converters given the same output path can both pass it
+// and both rename, the later silently destroying the earlier while both
+// exit zero. The README's correctness section records the measurement.
 //
 // link(2) is the exclusivity primitive here. It fails with EEXIST if the
 // destination exists, it is atomic, and unlike renamex_np(RENAME_EXCL)
@@ -456,7 +473,8 @@ enum class PublishResult {
 // name is removed immediately after.
 //
 // There is no fallback to an overwriting rename when link fails, which
-// is the opposite resolution to the F_FULLFSYNC fallback above, and
+// is the opposite resolution to the F_FULLFSYNC fallback in
+// sync_descriptor below, and
 // deliberately so. Downgrading a durability barrier still publishes
 // correct data under everything short of power loss. Downgrading an
 // exclusivity guarantee destroys a file another process just wrote.
@@ -680,6 +698,7 @@ int main(int argc, char* argv[])
     const std::string git_commit_hex = argv[4];
     const std::string dirty_text = argv[5];
 
+    // The header's symbol field is 16 bytes and must end with a '\0'.
     if (symbol.empty() || symbol.size() > 15) {
         std::cerr
             << "error: symbol must contain between 1 and 15 characters\n";
@@ -789,38 +808,26 @@ int main(int argc, char* argv[])
         return 1;
     }
 
-    // Hoisted here from the durability block at the end of main because
-    // the orphan scan below needs it too. Empty parent_path means the
-    // output is a bare filename in the working directory.
+    // Needed by both the orphan scan below and the durability step at the
+    // end. An empty parent_path means the output is a bare filename in the
+    // working directory.
     std::filesystem::path directory_path = output_path.parent_path();
 
     if (directory_path.empty()) {
         directory_path = ".";
     }
 
-    // §7.6: the pid goes in the temporary name so that two converters
-    // given the same output path cannot write into one another's
-    // temporary file.
+    // The pid goes in the temporary name so that two converters given the
+    // same output path never write into one temporary file.
     //
-    // What this buys on its own is narrow, and measurement rather than
-    // reasoning settled how narrow. The interleaved-writers failure it
-    // targets needs both processes past the check below before either
-    // opens its stream, a window a few instructions wide: forty
-    // concurrent runs against one output, and two more released together
-    // through a FIFO on a 486 MB input, never once hit it. What happened
-    // instead every time was that the loser found the temporary file
-    // already there and stopped.
+    // A shared temporary name also happened to serialise concurrent runs,
+    // because the second one found the file already there and stopped.
+    // Giving each process its own name removes that, which is safe only
+    // because the publish below is exclusive; without it, two runs would
+    // both publish and one would silently overwrite the other.
     //
-    // So the shared temporary name was doing duty as a mutex, and giving
-    // each process its own name removes it. That is only safe because
-    // the publish below is exclusive. Without it this change converts a
-    // loud refusal into a silent overwrite — measured at twelve
-    // publications out of forty where the shared name gave one.
-    //
-    // This does not touch §7.6's determinism rule. That rule forbids
-    // non-reproducible values in header fields, because they would break
-    // the byte-identical comparison of two conversions of one input. The
-    // temporary filename is not in the file.
+    // The pid is in the filename, not the header, so two conversions of
+    // one input still produce byte-identical files.
     std::filesystem::path temp_path = output_path;
 
     temp_path +=
@@ -892,6 +899,9 @@ int main(int argc, char* argv[])
     std::uint64_t line_number = 0;
     std::uint64_t record_count = 0;
 
+    // One pass over the input. record_count in the header still holds the
+    // placeholder; the real count is patched in after the loop, so the
+    // input never has to be read twice just to learn how many lines it has.
     while (std::getline(input, line)) {
         ++line_number;
 
@@ -984,6 +994,8 @@ int main(int argc, char* argv[])
         ++record_count;
     }
 
+    // getline stops at end of file and on a read error alike; bad() is what
+    // tells the two apart.
     if (input.bad()) {
         std::cerr
             << "error: I/O failure while reading input file\n";
@@ -1097,7 +1109,7 @@ int main(int argc, char* argv[])
     }
 
     // -----------------------------------------------------------------
-    // Header read-back — §7.6
+    // Header read-back
     // -----------------------------------------------------------------
     //
     // record_count is the only field written by seeking backwards over
@@ -1197,14 +1209,12 @@ int main(int argc, char* argv[])
         return 1;
     }
 
-    // §7.6 asks for the stored count to be checked against the file
-    // length as well as against the counter. Given the two checks above
-    // and the size check before them this cannot currently fire — it is
-    // the third side of a triangle whose other two sides have already
-    // been walked. It is written anyway because it is the constraint
-    // §7.6 names, and because it ties the stored field to the file
-    // length directly rather than through the in-memory counter, so it
-    // still holds if the size check above is ever changed or moved.
+    // The stored count checked against the file length. Given the two
+    // checks above and the size check before them this cannot currently
+    // fire: it is the third side of a triangle whose other two sides have
+    // already been walked. It stays because it ties the stored field to
+    // the file length directly rather than through the in-memory counter,
+    // so it still holds if the size check above is ever changed or moved.
     const std::uint64_t implied_record_count =
         (static_cast<std::uint64_t>(actual_file_size) - header_size)
         / record_size;
@@ -1249,7 +1259,7 @@ int main(int argc, char* argv[])
     }
 
     // -----------------------------------------------------------------
-    // Durability — §7.6
+    // Durability
     // -----------------------------------------------------------------
     //
     // Everything above this point establishes that the bytes in the page
@@ -1278,9 +1288,8 @@ int main(int argc, char* argv[])
     //
     // The sync of the contents is placed after the read-back rather than
     // before it so that a file the read-back is about to reject is not
-    // pushed to the device first. On the 734 MiB BTC dataset that
-    // ordering is worth real time; it changes nothing about what either
-    // check proves.
+    // pushed to the device first. On a large dataset that ordering saves
+    // real time; it changes nothing about what either check proves.
 
     // directory_path was computed near the top of main, alongside the
     // temporary name that the orphan scan needed it for.
