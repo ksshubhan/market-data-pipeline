@@ -1,50 +1,36 @@
-// measure_parse_cost — B3 (§6.5).
+// measure_parse_cost: B3, what parsing one message costs against handing it
+// off through the ring.
 //
-// The question B3 asks is "how does parse cost compare to handoff cost?"
-// This answers it directly rather than through an end-to-end harness B
-// arm, and the reason is worth stating rather than hiding.
+// Usage: measure_parse_cost <git-commit-40-hex> <dirty:0|1> <capture.log>
+//        <SYMBOL>
+// Reads the first 200,000 lines of a capture log and prints provenance,
+// three per-message costs and two ratios on stdout; the committed run is
+// results/parse_cost_20260928_171443.txt. Exits 2 on bad arguments and 1
+// on any other failure; macOS only, since it exits 1 unless the QoS class
+// is applied.
+// Related: parser.cpp (parse_book_ticker, shared with convert_capture),
+// spsc_ring_buffer.hpp (the queue), record.hpp (CaptureRecord and Record).
 //
-// §6.5 specifies B3 as a `--parse-in-ingest` flag on the pipeline,
-// comparing a pre-parsed replay against one that parses in the ingest
-// thread. Two problems with that shape, both discovered after B1 ran:
+// Why a direct comparison rather than an end-to-end --parse-in-ingest arm
+// in harness B. Above p99 the end-to-end distribution sits on a ~12 us
+// scheduler floor, so a ~170 ns parse would be visible only at p50. And
+// the producer would have to hold the raw lines beside the 734 MiB
+// dataset: this capture's first 200,000 messages are about 33 MB of JSON,
+// so a 2,000,000-message run would need roughly 330 MB. "What does parsing
+// cost relative to a handoff" is a question about a mean, and batched
+// timing answers it at far higher resolution.
 //
-//   1. §8.0c found that above p99 the latency distribution is dominated
-//      by a ~12 us scheduler floor. A parse costs ~1-3 us, so in an
-//      end-to-end arm it would be legible only at p50 and swamped
-//      everywhere else. The comparison would be a p50 comparison
-//      wearing a distribution's clothing.
+// Three arms, interleaved round by round, each reported as the median over
+// 20 rounds of ns per message:
+//   parse    parse_book_ticker over the captured JSON: the same function
+//            the offline converter calls, so one parser is measured.
+//   copy     one 56-byte CaptureRecord assignment: the pre-parsed path.
+//   handoff  a try_push/try_pop pair through the real ring.
 //
-//   2. The producer would have to hold the raw log lines for the slice
-//      in memory — roughly 400 MB for 2,000,000 messages — beside the
-//      734 MiB dataset. §6.4b already treats memory pressure between the
-//      sample buffer and the dataset as a real constraint.
-//
-// Batched timing in harness A's style answers the same question at far
-// higher resolution for a fraction of the code, and §6.2's rule points
-// the same way: batch where the question is about a mean, time
-// per-message where the question is about a distribution. "What does
-// parsing cost relative to a handoff" is a question about a mean.
-//
-// Three arms, interleaved per §5:
-//
-//   parse     parse_book_ticker over real captured JSON, the same
-//             function the offline converter calls. §6.5 requires this:
-//             two implementations would make the comparison worthless.
-//
-//   copy      the pre-parsed path — a 56-byte CaptureRecord assignment,
-//             which is what the producer does per record when the data
-//             has already been converted.
-//
-//   handoff   a full try_push/try_pop pair through the real SPSC ring,
-//             so the comparison is against this project's own measured
-//             handoff rather than against a number quoted from A1b under
-//             different conditions.
-//
-// Reported as ns per message and as the ratio. The honest framing, which
-// the output repeats: this is a **schema-specific key scanner**, not a
-// general JSON parser. It assumes a known Binance bookTicker layout, and
-// a generic JSON library would be considerably slower. Quoting this as
-// "JSON parsing costs X" would overclaim in the flattering direction.
+// This is a schema-specific key scanner, not a general JSON parser, and the
+// output says so. Quoting it as "the cost of JSON parsing" would overclaim
+// in the flattering direction.
+
 
 #include "measurement_thread.hpp"
 #include "parser.hpp"
@@ -77,15 +63,16 @@ std::uint64_t now_ns() noexcept
 }
 
 
+// 20 rounds, reported as the median, so one disturbed round cannot move
+// the result.
 constexpr std::size_t kRounds = 20;
 
-// Enough messages that a round is comfortably longer than a clock tick
-// (~41.667 ns) many times over, and few enough that the working set does
-// not become the thing being measured. 200,000 real messages is ~40 MB
-// of JSON, which fits well inside DRAM streaming without touching the
-// 734 MiB dataset.
+// Enough that each round spans many clock ticks: for this capture, 200,000
+// messages are about 33 MB of JSON, loaded once before any timing.
 constexpr std::size_t kMessages = 200'000;
 
+// The handoff arm pushes then pops, so occupancy never exceeds one and any
+// capacity works; this sets how many slots the loop cycles through.
 constexpr std::size_t kRingCapacity = 1024;
 
 
@@ -197,8 +184,9 @@ double measure_parse(
 
     const std::uint64_t end = now_ns();
 
-    // Without a sink the whole loop is dead at -O2 and the arm measures
-    // an empty loop. Same trap as §6.4b's pre-touch.
+    // parse_book_ticker is compiled in parser.cpp and there is no LTO, so
+    // these calls cannot be removed. The sink keeps the loop live if that
+    // ever changes.
     asm volatile("" :: "r"(sink) : "memory");
 
     return static_cast<double>(end - begin) /
@@ -218,6 +206,10 @@ double measure_copy(const std::vector<CaptureRecord>& source)
 
     for (std::size_t i = 0; i < source.size(); ++i) {
         record = source[i];
+        // Makes all 56 bytes of record observable. Without it the compiler
+        // reduces the assignment to a load of bid_price, the one field the
+        // sink reads, and the arm times a single load. It emits no
+        // instructions.
         asm volatile("" :: "r"(&record) : "memory");
         sink += static_cast<std::uint64_t>(record.bid_price);
     }
@@ -352,12 +344,11 @@ int main(int argc, char* argv[])
         );
 
         if (error != ParseError::none) {
-            // Numeric rather than named: parse_error_name lives inside
-            // convert_capture.cpp rather than the header, and duplicating
-            // a twenty-case switch here to name a failure that cannot
-            // occur on an already-validated dataset would be the kind of
-            // accretion §7.0 warns about. Cross-reference the enum in
-            // parser.hpp if this ever fires.
+            // Numeric rather than named: parse_error_name lives in
+            // convert_capture.cpp, not the header, and copying its
+            // thirteen-case switch here to name a failure that should not
+            // occur on a capture the converter accepts is not worth the
+            // duplication. The enum is in parser.hpp.
             std::cerr
                 << "error: message " << i
                 << " failed to parse (ParseError code "
@@ -378,9 +369,9 @@ int main(int argc, char* argv[])
 
     std::uint64_t parse_failures = 0;
 
-    // §5: interleave rather than run each arm to completion, so thermal
-    // drift on a fanless M2 spreads across conditions instead of loading
-    // onto whichever ran last.
+    // Interleave rather than run each arm to completion, so thermal drift
+    // on a fanless M2 spreads across the arms instead of loading onto
+    // whichever ran last.
     for (std::size_t round = 0; round < kRounds; ++round) {
         parse_rounds.push_back(
             measure_parse(json, timestamps, options.symbol, parse_failures)
