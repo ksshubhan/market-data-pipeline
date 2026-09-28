@@ -1,13 +1,16 @@
-// measure_condvar_wakeup — derives §4's bounded-spin constant.
+// measure_condvar_wakeup: derives a spin count for MutexQueue's consumer
+// from the ski-rental bound. Its result was later superseded; the section
+// below explains why and what replaced it.
 //
-// §4 leaves MutexQueue::kSpinCount at a provisional 200 and says to tune
-// it in Step 12 "once B1 shows the distribution of empty-queue intervals
-// under load". That method is circular: the tuned baseline is what
-// produces B1, so tuning from B1 means running the sweep twice with the
-// baseline changing underneath, and the resulting constant depends on
-// which offered rates happened to be swept.
+// Usage: measure_condvar_wakeup <git-commit-40-hex> <dirty:0|1>
+// Prints its measurements and the derived counts on stdout; the committed
+// runs are results/condvar_wakeup_*.txt. macOS for real numbers; the
+// Linux clock fallback is only so the logic can be exercised elsewhere.
 //
-// This derives it instead.
+// Why derive it rather than tune it from B1: the tuned baseline is what
+// produces B1, so tuning from B1 would mean running the sweep with the
+// baseline changing underneath, and the constant would depend on which
+// offered rates happened to be swept.
 //
 // Spinning on an empty queue is worth doing only while it costs less than
 // blocking would. Once the consumer has spun for as long as a park and
@@ -18,9 +21,8 @@
 //
 //     kSpinCount = park_wake_cost_ns / spin_iteration_cost_ns
 //
-// and both terms are measurable. That is the same house style §6.3 used
-// to derive the 70 ns calibration threshold from the single-boundary
-// model rather than picking a round number.
+// and both terms are measurable, the same way timer calibration derived
+// its 70 ns threshold from a model rather than picking a round number.
 //
 // ---------------------------------------------------------------------
 // The model this program implements is incomplete. Read this before
@@ -60,9 +62,10 @@
 //      parking. This is the control: subtracting it removes the
 //      cross-core coherence round trip and the loop overhead that both
 //      arms pay, leaving the park/wake cost alone. A1a measured this
-//      shape at 36.9 ns/handoff, so it doubles as a cross-check — if
-//      this arm reports something far from that, the harness is wrong
-//      before any conclusion is drawn from arm 1.
+//      shape at 36.9 ns per handoff, and one round trip here is two
+//      handoffs, so it doubles as a cross-check: if this arm reports
+//      something far from twice that, the harness is wrong before any
+//      conclusion is drawn from arm 1.
 //
 //   3. Spin-iteration cost. Not a bare `yield`: the real loop body in
 //      wait_nonempty() is two relaxed loads, a comparison, a third
@@ -72,7 +75,7 @@
 //      contended figure is the realistic one and is what the constant is
 //      derived from; the uncontended figure bounds it from below.
 //
-// Batched timing throughout for measurement 3, per §6.2: a single spin
+// Batched timing throughout for measurement 3: a single spin
 // iteration is far below the 41.667 ns tick, so it is timed across
 // millions of iterations and divided. Measurements 1 and 2 are per-round
 // rather than per-iteration for the same reason.
@@ -95,18 +98,18 @@
 
 namespace {
 
-// Matching harness_a: same clock, same call path, per §6.4b's clock
-// discipline. clock_gettime_nsec_np(CLOCK_UPTIME_RAW) is what §6.3
-// calibrated; mach_absolute_time reads the same counter but not through
-// the same code.
+// Matching harness_a: same clock, same call path.
+// clock_gettime_nsec_np(CLOCK_UPTIME_RAW) is what timer calibration
+// measured; mach_absolute_time reads the same counter but not through the
+// same code.
 std::uint64_t now_ns() noexcept
 {
 #if defined(__APPLE__)
     return clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
 #else
     // Non-Apple fallback exists only so the logic can be exercised off
-    // the measurement machine, matching replay_producer.hpp. §5's rule
-    // stands: all headline numbers come from bare macOS.
+    // the measurement machine, matching replay_producer.hpp. All headline
+    // numbers come from bare macOS.
     timespec ts = {};
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return static_cast<std::uint64_t>(ts.tv_sec) * 1'000'000'000ull +
@@ -129,7 +132,7 @@ constexpr std::uint64_t kAtomicIterations = 2'000'000;
 constexpr std::uint64_t kSpinIterations = 20'000'000;
 
 
-// §8.0b: a trial whose QoS did not apply is not the trial being reported.
+// A trial whose QoS did not apply is not the trial being reported.
 // Same rule as harness_a — abort rather than silently report an
 // unmitigated run as a mitigated one.
 void require_qos(const char* arm, QosResult qos)
@@ -275,9 +278,9 @@ void atomic_side(
 {
     for (std::uint64_t i = 0; i < iterations; ++i) {
         while (turn.load(std::memory_order_acquire) != my_turn) {
-            // All three branches, matching MutexQueue::cpu_relax. The
-            // aarch64-only version livelocks on a single-core host,
-            // which is not the measurement machine but is a real bug.
+            // All three branches, matching MutexQueue::cpu_relax, so the
+            // spin carries the right hint on every architecture it
+            // builds for.
 #if defined(__aarch64__)
             asm volatile("yield" ::: "memory");
 #elif defined(__x86_64__)
@@ -325,8 +328,7 @@ double measure_atomic_round(std::uint64_t iterations)
 // blocking budget.
 //
 // The accumulator is sunk through an asm barrier so the loop survives
-// -O2. §6.4b's warning about dead pre-touch loops applies identically
-// here: a spin loop whose result is discarded is deleted, and the
+// -O2. A spin loop whose result is discarded is deleted, and the
 // measurement would then report the cost of an empty loop.
 struct SpinTargets {
     std::atomic<std::uint64_t> head{0};
@@ -372,9 +374,9 @@ double measure_spin_round(
 
 
 // ---------------------------------------------------------------------
-// Provenance — same convention as harness_a and convert_capture (§7.6):
-// supplied by the caller, never queried at runtime, so the results
-// describe the build that produced them.
+// Provenance, supplied by the caller as in harness_a and written into the
+// output, so the results say which build produced them. It is not
+// checked against git.
 // ---------------------------------------------------------------------
 struct Provenance {
     std::string git_commit;
@@ -435,7 +437,7 @@ int main(int argc, char* argv[])
     spin_quiet_rounds.reserve(kRounds);
     spin_contended_rounds.reserve(kRounds);
 
-    // §5: interleave the arms rather than running each to completion, so
+    // Interleave the arms rather than running each to completion, so
     // thermal drift on a fanless M2 spreads across conditions instead of
     // loading onto whichever ran last.
     for (std::size_t round = 0; round < kRounds; ++round) {
