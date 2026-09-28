@@ -1,3 +1,30 @@
+// Harness A: queue microbenchmarks with no market data.
+//
+// Usage: harness_a <git-commit-40-hex> <dirty:0|1>
+//                  <experiment:a1|a2|a2b|a3b|a4|a4b>
+//
+// Each experiment compares a few arms, meaning variants that differ in
+// one thing only:
+//   a1   memory ordering: relaxed / acquire-release / seq_cst on a bare
+//        atomic, and acquire-release / seq_cst in the real queue
+//   a2   padding between the queue's two index blocks: 64 / 128 / 256
+//   a2b  the same question without the queue: two atomics 16 / 64 / 128 /
+//        256 bytes apart
+//   a3b  stride between adjacent ring slots: 80 / 128 / 256 bytes
+//   a4   cached vs uncached opposite index, in the real queue
+//   a4b  the same, with the producer timed alone against a ring it can
+//        never fill
+//
+// Every arm runs kRounds times, in a freshly shuffled order each round so
+// thermal drift is spread across arms rather than loaded onto whichever
+// runs last. Timing is batched: one clock read before a trial and one
+// after, divided by the operations completed, because the 41.67 ns clock
+// cannot time a single ~30 ns handoff. Output is a provenance header then
+// one CSV row per trial, on stdout; redirect it to a file in results/.
+//
+// macOS only: uses clock_gettime_nsec_np and the QoS thread hint. See
+// ARCHITECTURE.md.
+
 #include "record.hpp"
 #include "spsc_ring_buffer.hpp"
 #include "measurement_thread.hpp"
@@ -20,14 +47,15 @@
 
 namespace {
 
+// A1's atomic ping-pong splits the iterations into pairs, one per thread,
+// so the count must be even.
 constexpr std::uint64_t kIterations = 10'000'000;
 static_assert(kIterations % 2 == 0);
 
 constexpr std::size_t kCapacity = 1024;
-// Raised from 10 for Step 9. The A1 rerun showed queue_seq_cst
-// scattering across 22.6-27.0 M/s with no explanation from rejection
-// count, round order or shuffle position, so the medians for A2-A4 need
-// more trials behind them. 20 rounds costs about 35 seconds per run.
+// Enough trials per arm for a stable median. At 10 rounds A1's
+// queue_seq_cst arm scattered across 22.6-27.0 M/s with no explanation
+// from rejection count, round order or shuffle position.
 constexpr std::size_t kRounds = 20;
 
 enum class Experiment {
@@ -60,10 +88,10 @@ enum class Arm {
 
     // A2. Acquire-release throughout; only the separation differs, so the
     // slot array is byte-identical across the three arms and there is no
-    // working-set confound. The 64-byte arm is the one under test: this
-    // machine has 128-byte hardware lines (hw.cachelinesize), so padding
-    // each index block to 64 leaves both blocks inside one line and the
-    // false sharing is real rather than hypothetical.
+    // working-set confound. The 64-byte arm was the one under test, on the
+    // expectation that with 128-byte lines (hw.cachelinesize) both blocks
+    // would share one line. A2b later measured the coherence granule at 64
+    // bytes, so they do not: at 64 there is no false sharing to measure.
     QueueSeparation64,
     QueueSeparation128,
     QueueSeparation256,
@@ -79,7 +107,7 @@ enum class Arm {
     FalseSharing256,
 
     // A3b. Stride between adjacent ring slots. Record stays 80 bytes in
-    // every arm; the slot wrapper is what is over-aligned (§6.5 A3).
+    // every arm; the slot wrapper is what is over-aligned.
     SlotStride80,
     SlotStride128,
     SlotStride256,
@@ -205,11 +233,9 @@ static_assert(sizeof(CachedIndexQueue) == sizeof(UncachedIndexQueue));
 
 
 // A4b. A4 could not answer the question: its arms differed 9x in
-// full_rejections and throughput correlated positively with rejections
-// within each arm (r = +0.61 cached, +0.80 uncached), so the 18%
-// difference was producer/consumer balance rather than mechanism. The
-// crossover trial settles it — the cached arm's one high-rejection round
-// produced 39.04 M/s, the fastest trial in either arm.
+// full_rejections, and within each arm throughput rose with rejections,
+// so its throughput difference measured the balance between producer and
+// consumer rather than the cached index.
 //
 // A4b removes the retry loop by construction rather than gating on it.
 // The ring holds more slots than the run pushes, so try_push can never
@@ -232,8 +258,8 @@ static_assert(sizeof(CachedIndexQueue) == sizeof(UncachedIndexQueue));
 // DRAM-resident and the payload store is dearer than at capacity 1024.
 // That is a constant added to both arms. It dilutes the relative effect;
 // it cannot confound it. The larger run buys a measured window of tens of
-// milliseconds rather than two, which is what the first A4b run needed —
-// its cached arm had an IQR of 42.4% at 65,000 iterations.
+// milliseconds rather than two, which a shorter first version showed was
+// too noisy to use.
 constexpr std::size_t kA4bCapacity = 1048576;
 constexpr std::uint64_t kA4bIterations = 1000000;
 
@@ -269,10 +295,10 @@ struct TrialResult {
     double seconds;
     std::uint64_t full_rejections;
 
-    // Operations completed in this trial. A1 and A2 arms complete
-    // kIterations handoffs; A2b arms complete 2 * stores-per-thread
-    // release stores. Kept explicit so the throughput column is never
-    // divided by the wrong denominator.
+    // Operations completed in this trial. A1, A2 and A4 arms complete
+    // kIterations handoffs; A2b and A3b arms complete twice the per-thread
+    // count; A4b arms complete kA4bIterations pushes. Kept explicit so the
+    // throughput column is never divided by the wrong denominator.
     std::uint64_t operations;
 };
 
@@ -290,12 +316,12 @@ struct RunResult {
     QosResult qos;
 };
 
-// Provenance is supplied by the caller rather than queried at runtime,
-// matching convert_capture (§7.6): the results file must describe the
-// build that produced it, not the state of the working tree at some later
-// moment. Emitting it into the results file itself means the artifact is
-// self-describing — the environment dump is still committed alongside,
-// but the pairing becomes checkable rather than assumed by timestamp.
+// Provenance is supplied by the caller and written into the results file,
+// so the file itself says which build produced it and the environment dump
+// committed alongside can be matched to it by commit rather than by
+// timestamp. Unlike convert_capture's --require-clean, nothing here checks
+// the commit or dirty flag against git; the README's limitations section
+// says so.
 struct Provenance {
     std::string git_commit;
     bool dirty;
@@ -398,7 +424,7 @@ std::uint64_t now_ns() noexcept
 }
 
 // A trial whose QoS class did not apply is not the trial being reported:
-// §5's P-core bias is a stated part of the measurement conditions, so a
+// the P-core bias is a stated part of the measurement conditions, so a
 // silent fallback would put an unmitigated run in the results file.
 bool check_qos(const char* arm, QosResult qos)
 {
@@ -485,7 +511,9 @@ RunResult run_once()
             input.sequence = sequence;
 
             while (!queue.try_push(input)) {
-                // Harness A policy: retry the same record.
+                // Harness A policy: retry the same record, so every trial
+                // completes exactly kIterations handoffs and nothing is
+                // lost. Rejections are still counted by the queue.
             }
 
             ++pushes_completed;
@@ -518,7 +546,7 @@ RunResult run_once()
 //
 // A2 could not answer it. Its three arms differed by up to 60x in
 // full_rejections, so "completed handoffs per second" was partly
-// measuring how far the producer outran the consumer (§7.7a). Here there
+// measuring how far the producer outran the consumer. Here there
 // is no queue, no retry loop and no capacity, so the two threads cannot
 // get out of balance: each performs exactly the same number of release
 // stores to its own atomic and nothing else.
@@ -545,7 +573,7 @@ SeparationRunResult run_separation_once()
 {
     SeparatedCounters<Separation> counters;
 
-    // §6.5b: verify the layout rather than assuming alignas worked.
+    // Verify the layout rather than assuming alignas worked.
     const std::ptrdiff_t observed =
         reinterpret_cast<const std::uint8_t*>(&counters.second) -
         reinterpret_cast<const std::uint8_t*>(&counters.first);
@@ -639,7 +667,8 @@ SeparationRunResult run_separation_once()
 template <typename Queue>
 RunResult run_producer_bound_once()
 {
-    // Heap rather than stack: 5.2 MB exceeds the default thread stack.
+    // Heap rather than stack: at kA4bCapacity the queue is about 84 MB,
+    // far larger than any default stack.
     auto queue = std::make_unique<Queue>();
 
     std::atomic<bool> start{false};
@@ -829,6 +858,10 @@ SeparationRunResult run_slot_once()
     };
 }
 
+// A1a: a strict ping-pong on one atomic counter, with no payload. Each
+// thread waits for the other's value, so every handoff pays a full
+// cross-core round trip; the three arms differ only in the memory order
+// of the load and store.
 template <
     std::memory_order LoadOrder,
     std::memory_order StoreOrder
@@ -916,6 +949,8 @@ int main(int argc, char* argv[])
         return 1;
     }
 
+    // Fixed, so the shuffled order of arms is the same on every run and
+    // recorded in the output.
     constexpr std::uint32_t kShuffleSeed = 0xA1A1A1A1u;
 
     std::cout << std::setprecision(17);
@@ -1016,9 +1051,9 @@ int main(int argc, char* argv[])
         << sizeof(ProducerBoundCachedQueue) << '\n'
         << "shuffle_seed: " << kShuffleSeed << '\n';
 
-    // §5: a P-core bias hint, not pinning. Every trial verifies the class
-    // was actually applied and aborts the run otherwise, so reaching the
-    // end of this file means all 50 trials ran under it.
+    // A P-core bias hint, not pinning. Every trial verifies the class was
+    // actually applied and aborts the run otherwise, so a complete results
+    // file means every trial in it ran under the hint.
     std::cout
         << "qos_class: user_interactive\n";
 
