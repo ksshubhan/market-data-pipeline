@@ -1,7 +1,25 @@
+// Implementation of parse_scaled_decimal and parse_book_ticker (parser.hpp).
+//
+// parse_book_ticker turns one Binance USD-M futures bookTicker message into
+// a CaptureRecord: E and T as unsigned integers, b, B, a and A as signed
+// integers at a fixed scale of 10^8, and the capture timestamp copied from
+// the caller. It checks that e is "bookTicker" and that s is the symbol the
+// caller expects, and writes the output only on success. No allocation,
+// no exceptions, no floating point, and no document tree: each key is
+// matched as it is scanned.
+//
+// This is a key scanner for one message schema, not a general JSON parser;
+// skip_json_value says which inputs it does not handle. Called by
+// convert_capture.cpp for every line of a capture log and by
+// measure_parse_cost.cpp; tested by test_parser.cpp. See ARCHITECTURE.md.
+
 #include "parser.hpp"
 #include <limits>
 
 namespace {
+// Indexed by how many of the 8 fractional digits an input left out, 0 to 8,
+// to scale its mantissa up to 10^8. The length is tied to
+// kFixedPointFractionalDigits by hand, not checked by the compiler.
 constexpr std::int64_t kPowersOfTen[] = {
     1,
     10,
@@ -35,6 +53,9 @@ void skip_whitespace(
     }
 }
 
+// Reads keys and the six string values the parser uses. The result is a
+// view of the raw bytes, which is the string's value only when nothing in
+// it is escaped, so a backslash is rejected rather than decoded.
 ParseError parse_json_string(
     std::string_view input,
     std::size_t& pos,
@@ -68,6 +89,7 @@ ParseError parse_json_string(
     return ParseError::malformed_json;
 }
 
+// Leading zeros are accepted, which strict JSON forbids.
 ParseError parse_json_uint64(
     std::string_view input,
     std::size_t& pos,
@@ -90,6 +112,8 @@ ParseError parse_json_uint64(
         const std::uint64_t digit =
             static_cast<std::uint64_t>(input[pos] - '0');
 
+        // value * 10 + digit fits exactly when value <= (max - digit) / 10.
+        // Checked before the multiply, so the multiply never wraps.
         if (
             value >
             (std::numeric_limits<std::uint64_t>::max() - digit) / 10
@@ -106,6 +130,7 @@ ParseError parse_json_uint64(
 }
 
 
+// Skips the value of a key the parser does not read.
 ParseError skip_json_value(
     std::string_view input,
     std::size_t& pos
@@ -117,7 +142,8 @@ ParseError skip_json_value(
         return ParseError::malformed_json;
     }
 
-    // String value
+    // A string is skipped escape-aware, so a '}', a ',' or text such as
+    // "b":"999.99" inside an unknown string is never read as structure.
     if (input[pos] == '"') {
         ++pos;
 
@@ -145,7 +171,10 @@ ParseError skip_json_value(
     }
 
 
-    // Primitive value: number, true, false, null, etc.
+    // Anything else is assumed to be a number, true, false or null, and is
+    // skipped to the next ',' or '}' without being checked. Nested objects
+    // and arrays are not supported: the skip stops at the first ',' or '}'
+    // inside them.
     while (
         pos < input.size() &&
         input[pos] != ',' &&
@@ -159,6 +188,9 @@ ParseError skip_json_value(
 
 }
 
+// Accepts digits or digits.digits only: no sign, exponent, whitespace or
+// bare decimal point. A ninth fractional digit is rejected, never
+// truncated, because the scale is fixed at 10^8.
 ParseError parse_scaled_decimal(
     std::string_view input,
     std::int64_t& output
@@ -229,6 +261,10 @@ ParseError parse_scaled_decimal(
     const std::int64_t multiplier =
     kPowersOfTen[missing_fractional_digits];
 
+    // The exact bound, not a digit count: the largest value accepted is
+    // 92233720368.54775807, INT64_MAX at scale 10^8, so an 11-digit integer
+    // part is accepted whenever the scaled value fits. The divisor comes
+    // from the table, so this is a runtime division, once per field.
     if (
         mantissa >
         std::numeric_limits<std::int64_t>::max() / multiplier
@@ -250,6 +286,8 @@ ParseError parse_book_ticker(
 {
     std::size_t pos = 0;
 
+    // Filled locally and copied to output only once every check has passed,
+    // so a rejected message leaves the caller's record untouched.
     CaptureRecord record{};
     record.capture_wall_time_ns = capture_wall_time_ns;
 
@@ -270,6 +308,9 @@ ParseError parse_book_ticker(
 
     ++pos;
 
+    // Fields may arrive in any order. Unknown keys are skipped, since the
+    // captured messages already carry fields this parser does not read (u,
+    // ps, st). A repeated key is not detected: its last value wins.
     while (true) {
         skip_whitespace(json, pos);
 
@@ -299,6 +340,10 @@ ParseError parse_book_ticker(
         ++pos;
         skip_whitespace(json, pos);
 
+        // Keys are compared byte for byte: "b"/"B" and "a"/"A" are price and
+        // quantity. Matched case-insensitively, "B" would reach the price
+        // branch first and the quantity would never be set, so every
+        // message would fail missing_required_field.
         if (key == "e") {
             if (pos >= json.size() || json[pos] != '"') {
                 return ParseError::wrong_field_type;
@@ -319,6 +364,9 @@ ParseError parse_book_ticker(
             seen_event_type = true;
         }
 
+        // The symbol is validated against the caller's, not stored:
+        // CaptureRecord has no symbol field, and the converter writes it once
+        // into the .bin header.
         else if (key == "s") {
             if (pos >= json.size() || json[pos] != '"') {
                 return ParseError::wrong_field_type;
@@ -481,6 +529,8 @@ ParseError parse_book_ticker(
             return ParseError::malformed_json;
         }
 
+        // A comma must be followed by another key, so a trailing comma is
+        // malformed_json rather than a missing field.
         if (json[pos] == ',') {
             ++pos;
 
@@ -507,6 +557,8 @@ ParseError parse_book_ticker(
         return ParseError::malformed_json;
     }
 
+    // Checked last, so a message that is both malformed and incomplete
+    // reports malformed_json.
     if (
         !seen_event_type ||
         !seen_symbol ||
