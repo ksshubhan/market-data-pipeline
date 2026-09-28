@@ -1,3 +1,21 @@
+// test_capture_file.cpp: tests for CaptureFile::open, the reader and
+// validator for converted .bin captures.
+//
+// A validator tested only against a good file tests nothing: its job is
+// rejecting bad ones. So each case starts from one good 10-record file
+// built in memory, changes one thing (a header field, the file's length,
+// or the symbol the caller expects), writes it to a temporary file, and
+// checks that open returns that specific error and leaves nothing mapped.
+// One case also checks that a good file's records read back correctly and
+// that moving a CaptureFile transfers its mapping.
+//
+// Each failure is printed to stderr; the exit status is 1 if any check
+// failed.
+//
+// Related: capture_file.hpp, capture_file.cpp (the code under test),
+// convert_capture.cpp (writes these files), harness_b.cpp and
+// verify_capture.cpp (open them).
+
 #include "capture_file.hpp"
 
 #include <cstdio>
@@ -10,11 +28,6 @@
 #include <unistd.h>
 
 
-// A validator tested only against a good file tests nothing: the whole
-// job is rejecting bad ones. So each case builds a valid 10-record file
-// in memory, corrupts exactly one field, writes it to a temporary path,
-// and asserts the specific error comes back.
-//
 // No assert() anywhere: every configured build defines NDEBUG.
 
 namespace {
@@ -48,6 +61,9 @@ std::vector<std::uint8_t> make_valid_file()
 
     std::memcpy(bytes.data(), &header, sizeof(header));
 
+    // Fixed point at the file's scale of 10^8: a bid of 72,009.00 for
+    // 3.065 BTC. Each record differs by i so a misplaced record is
+    // detectable.
     for (std::uint64_t i = 0; i < kTestRecordCount; ++i) {
         CaptureRecord record = {};
 
@@ -70,6 +86,10 @@ std::vector<std::uint8_t> make_valid_file()
 }
 
 
+// Writing through a BinaryHeader* over raw bytes carries the same C++20
+// object-lifetime caveat capture_file.cpp notes for header(). Alignment is
+// not the issue: the vector's storage comes from operator new, which
+// aligns for any fundamental type.
 BinaryHeader* header_of(std::vector<std::uint8_t>& bytes)
 {
     return reinterpret_cast<BinaryHeader*>(bytes.data());
@@ -86,6 +106,8 @@ bool write_temp(const std::vector<std::uint8_t>& bytes, std::string& path)
         return false;
     }
 
+    // An empty vector's data() may be null, so the empty fixture skips
+    // write() rather than pass it a null pointer.
     const bool ok =
         bytes.empty() ||
         ::write(fd, bytes.data(), bytes.size()) ==
@@ -213,9 +235,8 @@ void test_valid_file_contents()
 
     check(name, file.page_size() >= 4096, "page size implausible");
 
-    // The mapping is small enough to be resident already; warm() must
-    // still return something derived from the bytes so the loop cannot
-    // be optimised away.
+    // warm() returns the sum of the bytes it touched, and the first is the
+    // magic's 'M', so zero means it never read the mapping.
     check(name, file.warm() != 0, "warm() returned zero");
 
     // Moving must transfer the mapping rather than double-unmapping it.
@@ -261,7 +282,8 @@ int main()
     }
 
     {
-        // Checked after magic and version, never before them.
+        // Magic and version stay valid: the validator checks them first,
+        // and a bad one would stop it before header_size is reached.
         std::vector<std::uint8_t> bytes = make_valid_file();
         header_of(bytes)->header_size = 32;
         expect("reject/header_size", bytes, kTestSymbol,
@@ -297,7 +319,7 @@ int main()
     }
 
     {
-        // §7.1: depth is a recognised stream this code refuses to read,
+        // Depth is a recognised stream this code refuses to read,
         // which is a different answer from an unrecognised one.
         std::vector<std::uint8_t> bytes = make_valid_file();
         header_of(bytes)->stream_type =
@@ -338,15 +360,17 @@ int main()
 
     {
         // Replaying ETHW as BTC is the mistake the symbol field exists
-        // to prevent (§7.6).
+        // to prevent.
         expect("reject/symbol_mismatch", make_valid_file(), "ETHWUSDT",
             CaptureFileError::symbol_mismatch);
     }
 
     {
-        // A crash between "write records" and "patch count" leaves a file
-        // that is structurally complete. UINT64_MAX is what makes it
-        // report as incomplete rather than as a size mismatch (§7.6).
+        // The converter writes this placeholder count first and patches
+        // the real one last, so a file still carrying it never finished.
+        // It must be named as unfinished. Without its own check it would
+        // still be rejected, but as record_count_overflow, since UINT64_MAX
+        // is past the overflow guard's limit.
         std::vector<std::uint8_t> bytes = make_valid_file();
         header_of(bytes)->record_count = kUnfinalizedRecordCount;
         expect("reject/unfinalized_count", bytes, kTestSymbol,
