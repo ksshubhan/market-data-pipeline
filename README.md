@@ -118,8 +118,8 @@ to the scheduler floor that dominates both arms' upper percentiles.
 | 100k/s | 12,081 (0.60%) | 1,062,550 (53.1%) | **88×** |
 
 At 100k/s the tuned baseline's consumer parks on roughly half of all
-messages — its 8192-iteration spin is ~10.6 µs against a 10 µs
-inter-arrival gap, right at the boundary — and each park costs the
+messages — on a quiet queue its 8192-iteration spin lasts about 2.4 µs,
+well short of the 10 µs gap between messages — and each park costs the
 producer a wake syscall on the critical path of its own send schedule.
 The lock-free arm never parks. Same machine, same rate, same scheduler
 floor: 88× fewer messages delayed past a microsecond.
@@ -607,16 +607,24 @@ records/s (`results/spin_sweep_20260905_130613.csv`):
 | 8192 | 437 | 41 ns |
 | 65536 | 8 | 41 ns |
 
-A 78× reduction in producer lag tracking a 1479× reduction in parks, and
-65536 changes nothing further — so 8192 is on the flat part of the curve.
-8192 iterations is ~10.6 µs, which exceeds the inter-arrival gap at every
-rate at or above ~95k/s. That bound is the justification, rather than a
-fitted crossover.
+A 78× reduction in producer lag tracking a 1479× reduction in parks.
+65536 parks less but buys nothing: producer lag is unchanged at 1M/s,
+consumer p99 latency rises from 416 to 1,416 ns, and at 500k/s producer
+p99 lag rises from 41 to 167 ns. So 8192 is the measured choice at the
+rate the sweep ran.
 
-**What it does not fix.** Above ~2.5M/s the spin budget stops mattering
-entirely: parks fall from 69,674 to 3 and producer lag does not move
-(5,891 vs 6,358 ns). There the cost is the lock itself, and the baseline's
-ceiling is real.
+What 8192 iterations is in time depends on the line being spun on: about
+10.6 µs at the contended ~1.29 ns per iteration, but about 2.4 µs at the
+quiet ~0.29 ns that `measure_condvar_wakeup` also measured. On a quiet
+queue it covers the gap between messages only from about 425k/s up,
+which is why B1's 100k/s and 250k/s rows still park on about half their
+messages (`results/harness_b_spin8192_20260905_131415.csv`) and pass the
+lag gate anyway.
+
+**What it does not fix.** At 5M/s the spin budget stops mattering: across
+the sweep parks fall from 69,674 to 3 and producer p99 lag does not move
+(6,075, 5,891 and 6,358 ns). There the cost is the lock itself, and the
+baseline's ceiling is real.
 
 `measure_condvar_wakeup` is kept in the repository with its model's
 limitation documented in place. Its measurements are correct; the
