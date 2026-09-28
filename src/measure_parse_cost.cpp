@@ -218,6 +218,7 @@ double measure_copy(const std::vector<CaptureRecord>& source)
 
     for (std::size_t i = 0; i < source.size(); ++i) {
         record = source[i];
+        asm volatile("" :: "r"(&record) : "memory");
         sink += static_cast<std::uint64_t>(record.bid_price);
     }
 
