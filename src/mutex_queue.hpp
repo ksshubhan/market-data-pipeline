@@ -1,3 +1,17 @@
+// mutex_queue.hpp: MutexQueue, the baseline B1 compares the SPSC ring
+// against. A bounded FIFO guarded by one std::mutex, with a condition
+// variable so an idle consumer can sleep instead of spinning forever.
+//
+// It has the ring's interface: try_push and try_pop, both non-blocking, and
+// try_push rejects the newest record when full. harness_b drives both
+// queues through the same templated code. wait_nonempty() is the one extra
+// entry point: a bounded spin, then a condvar wait, used only by this
+// queue's consumer.
+//
+// Related: spsc_ring_buffer.hpp (the queue it is compared against),
+// harness_b.cpp (B1 and the spin sweep), measure_condvar_wakeup.cpp (the
+// park/wake and spin-iteration costs quoted below).
+
 #pragma once
 
 #include <array>
@@ -9,11 +23,9 @@
 #include <type_traits>
 
 
-// SpinCount is a template parameter so the constant can be swept as a
-// diagnostic without editing the header between runs. The default is the
-// derived 1000 documented at kSpinCount below; harness_b's spin-sweep
-// mode instantiates other values to test whether producer lag in the
-// baseline arm is caused by wake syscalls.
+// SpinCount is a template parameter so the spin sweep can instantiate
+// several values without editing this header. The default is 8192; see
+// kSpinCount below.
 template <typename T, std::size_t Capacity, int SpinCount = 8192>
 class MutexQueue {
     static_assert(Capacity > 0);
@@ -46,9 +58,8 @@ public:
 
         if (was_empty) {
             // Counted under the lock, so this adds no sharing the mutex
-            // does not already impose. Read after join, which supplies
-            // the happens-before edge, so a plain uint64_t is correct
-            // here for the same reason §6.5b gives for full_rejections.
+            // does not already impose. A plain uint64_t is enough: it is
+            // written here and read in signals(), both under mutex_.
             ++signals_;
         }
 
@@ -81,29 +92,27 @@ public:
     }
 
     // Baseline-only blocking entry point, deliberately absent from the
-    // shared interface (§4). try_pop() stays non-blocking on both arms,
-    // or the parity argument collapses.
+    // shared interface: try_pop() stays non-blocking on both queues, or the
+    // comparison is no longer like for like.
     //
     // Returns false only when the queue is closed and empty.
     bool wait_nonempty()
     {
-        // §4's bounded spin. Without it an interviewer dismisses the
-        // comparison in one sentence: a condvar wait on every empty queue
-        // means the baseline pays a syscall for intervals that are
-        // routinely shorter than the syscall itself, and beating that is
-        // not a result.
+        // The bounded spin. Without it the comparison is dismissed in one
+        // sentence: a condvar wait on every empty queue means the baseline
+        // pays a syscall for gaps routinely shorter than the syscall
+        // itself, and beating that is not a result.
         //
-        // The spin reads the counters without holding the lock, so the
-        // members are std::atomic and the reads are relaxed. Plain
-        // uint64_t would be a data race and therefore undefined —
-        // "benign in practice" is exactly the reasoning §2 rejects and
-        // C1 exists to disprove, and TSan would flag it against §6.6's
-        // clean-arms claim.
+        // The spin reads the counters without holding the lock, so they are
+        // std::atomic and the reads are relaxed. With plain uint64_t the
+        // unlocked read would be a data race and so undefined behaviour;
+        // "benign in practice" is exactly the reasoning the C1 control
+        // exists to disprove, and ThreadSanitizer would flag it.
         //
-        // The mutex still provides all mutual exclusion and ordering;
-        // the atomics only make this unlocked read well-defined. Relaxed
-        // loads are plain ldr on ARM64, so the locked paths are
-        // unchanged. A stale read costs one wasted iteration, never a
+        // The mutex still provides all mutual exclusion and ordering; the
+        // atomics only make this unlocked read well-defined. Relaxed loads
+        // and stores are plain ldr and str on ARM64, so the locked paths
+        // are unchanged. A stale read costs one wasted iteration, never a
         // missed wakeup: the predicate is re-evaluated under the lock
         // below.
         for (int i = 0; i < kSpinCount; ++i) {
@@ -185,54 +194,53 @@ public:
     }
 
 private:
-    // §4's spin budget. Default 8192, measured — and the number it
-    // replaces is kept here because the way the first answer was wrong
-    // is worth more than the answer.
+    // The spin budget: 8192, chosen from a measured sweep. The number it
+    // replaced is kept here because the way the first answer was wrong is
+    // worth more than the answer.
     //
-    // First attempt, 4 Sep: derive it from the ski-rental bound. Spinning
-    // is worth doing only while it costs less than blocking, so spin for
-    // exactly the cost of a park and wake and the worst case is twice
-    // optimal. measure_condvar_wakeup measured park/wake at ~1296 ns and
-    // a spin iteration at ~1.29 ns, giving 1004, rounded to 1000.
+    // First attempt, 4 Sep: the ski-rental bound. Spin for exactly the cost
+    // of a park and wake and the worst case is twice optimal.
+    // measure_condvar_wakeup measured park/wake at ~1296 ns and a contended
+    // spin iteration at ~1.29 ns, giving 1004, rounded to 1000.
     //
-    // That model was incomplete. It costs the *waiter* correctly and
-    // ignores what blocking costs the *signaller*: when a consumer is
-    // parked, the producer's notify_one becomes a __ulock_wake syscall on
-    // the critical path of its own send schedule. In a queue whose
-    // producer must never be delayed, that term dominates the one the
-    // model optimised.
+    // That model was incomplete. It costs the waiter correctly and ignores
+    // what blocking costs the signaller: when a consumer is parked, the
+    // producer's notify_one becomes a __ulock_wake syscall on the critical
+    // path of its own send schedule.
     //
-    // The spin sweep measured it directly (results/spin_sweep_*.csv).
-    // At 1M records/s, spin 1000 parked on 646,253 of 2,000,000 messages
-    // and the producer's p99 lag was 3208 ns; spin 8192 parked 437 times
-    // and p99 lag was 41 ns. A 78x reduction in producer lag, tracking a
-    // 1479x reduction in parks. Consumer p99 latency fell with it, from
-    // 9917 ns to 416 ns.
+    // The spin sweep measured that directly
+    // (results/spin_sweep_20260905_130613.csv). At 1M records/s, spin 1000
+    // parked on 646,253 of 2,000,000 messages with producer p99 lag 3208
+    // ns; spin 8192 parked 437 times with p99 lag 41 ns, one clock tick.
+    // Consumer p99 latency fell from 9917 ns to 416 ns. 65536 parked 8
+    // times with the same producer lag, but consumer p99 rose to 1416 ns,
+    // and at 500k/s producer p99 lag rose from 41 to 167 ns: going higher
+    // costs more than it buys.
     //
-    // 8192 iterations is ~10.6 us of spinning, which exceeds the
-    // inter-arrival gap at every offered rate at or above ~95k/s — the
-    // whole of B1's sweep. That is the justification: a bound covering
-    // the sweep, not a fitted crossover. 65536 was also measured and
-    // changes nothing (parks 8 vs 437 at 1M, p99 lag identical), so 8192
-    // is on the flat part of the curve rather than at its edge.
+    // What 8192 is in time depends on the state of the line being spun on.
+    // At the contended ~1.29 ns per iteration it is ~10.6 us. On a quiet
+    // queue measure_condvar_wakeup measured ~0.29 ns, so ~2.4 us, which
+    // covers the gap between messages only at ~425k/s and above. So at
+    // 100k/s and 250k/s the consumer still parks on about half the messages
+    // (results/harness_b_spin8192_20260905_131415.csv). Those rows pass the
+    // lag gate anyway: the gaps there are long enough to absorb the wake.
     //
-    // What this does NOT fix, and §4 should not pretend otherwise: above
-    // ~2.5M/s the spin budget stops mattering entirely. At 5M/s, parks
-    // fall from 69,674 to 3 across the same sweep and producer p99 lag
-    // does not move (5891 vs 6358 ns). There the cost is the lock itself,
-    // not the wait policy, and the baseline's ceiling is real.
+    // What the budget does not fix: at 5M/s it stops mattering. Across the
+    // sweep parks fall from 69,674 to 3 and producer p99 lag does not move
+    // (6075, 5891, 6358 ns). There the cost is the lock itself, not the
+    // wait policy, and the baseline's ceiling is real.
     //
-    // SpinCount stays a template parameter because 1000 remains a
-    // reportable configuration, not dead code. A condvar queue that
-    // blocks is what §3 describes as catastrophic on the tail, and
-    // tuning it away is exactly what §4 requires — so both are run and
-    // both are reported. Reporting only the tuned arm understates the
-    // mechanism the project is about; reporting only the parking arm is
-    // the strawman §4 forbids.
+    // SpinCount stays a template parameter because 1000 remains a reported
+    // configuration, not dead code. A condvar queue that blocks is
+    // catastrophic on the tail, and tuning that away is the point of a fair
+    // baseline, so both are run and both are reported. Reporting only the
+    // tuned arm understates the mechanism the project is about; reporting
+    // only the parking arm is a strawman.
     static constexpr int kSpinCount = SpinCount;
 
-    // Racy reads used only to decide whether to take the lock. See
-    // wait_nonempty().
+    // Unlocked reads, used only to decide whether to take the lock. Atomic,
+    // so not a data race; possibly stale, which the locked re-check
+    // absorbs. See wait_nonempty().
     std::uint64_t size_hint() const noexcept
     {
         return tail_.load(std::memory_order_relaxed) -
@@ -276,9 +284,9 @@ private:
     mutable std::mutex mutex_;
     std::condition_variable not_empty_;
 
-    // Diagnostics for §4's spin tuning. Producer-written and
-    // consumer-written respectively, both only under the mutex, both
-    // read only after join.
+    // Diagnostics for the spin sweep. signals_ is producer-written and
+    // parks_ consumer-written, both only under mutex_, and read through
+    // accessors that take it.
     std::uint64_t signals_ = 0;
     std::uint64_t parks_ = 0;
 };
