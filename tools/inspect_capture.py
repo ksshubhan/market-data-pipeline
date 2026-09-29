@@ -1,39 +1,21 @@
 #!/usr/bin/env python3
-"""The routine capture inspector — §7.0.
+"""The routine capture inspector.
 
-One pass over a capture .log, reporting everything routinely known about
+One pass over each capture .log, printing what is routinely known about
 it: fractional-digit maxima, quantity maxima, raw-line against
-payload-message counts, unusual leading zeros, E monotonicity, and
-capture-clock monotonicity with backwards-step magnitudes.
+payload-message counts, unusual leading zeros, event-time (E) decreases,
+and capture-clock backwards steps with their magnitudes. The whole run
+stops at the first line it cannot accept (malformed, a missing or
+non-string field, a changed symbol), naming the file and line.
 
-§7.0 wants exactly one command that does this, rather than a per-check
-script accreting for each new question. The rule is about lifecycle, not
-line count: this is the *gate*, run on every capture before anything
-downstream is trusted, and it stays the single routine inspector.
-tools/inspect_interarrival.py is a different kind of thing — a closed
-one-off study whose output is a committed artifact of B2 — and keeping it
-separate is not accretion.
+This is the one routine check run on every capture before anything
+downstream uses it: a new question about captures becomes a check here,
+not a new script. tools/inspect_interarrival.py is not routine; it is a
+one-off study whose output is committed.
 
-WHAT THIS FILE WAS MISSING UNTIL 5 SEP, AND WHY IT MATTERED.
-
-It was named inspect_capture_precision.py and did five of the six checks
-above. Capture-clock monotonicity was absent: the capture timestamp was
-parsed only to confirm it was an integer, then discarded. §7.0 and §6.1a
-both described this file as reporting it, and §6.1a built an instruction
-on top of that description — read the backwards-step count before
-building the pacer, and if it is zero, assert that at load time. That
-instruction was not executable from the tool it named.
-
-The count did exist, but in inspect_interarrival.py, which was only ever
-run against ETHW. So the BTC capture — the file every B1 datapoint
-replays — had never had its clock checked at all.
-
-Nothing reported was affected: harness B paces from
-build_fixed_rate_schedule, which ignores captured gaps entirely, and B2
-was closed as an analysis rather than run. But this is the third defect
-of the same kind after §6.5a's gap reconciliation and §7.3a's
-capture_index formula — prose describing code, read many times and
-executed zero times.
+Input is what tools/capture.py writes and src/convert_capture.cpp
+converts. The output for the two captures in use is committed as
+results/inspect_capture_*.txt.
 
 Usage:
     python3 tools/inspect_capture.py <capture.log> [capture.log ...]
@@ -115,14 +97,14 @@ def inspect_capture(path: Path) -> None:
     leading_zero_count = 0
     leading_zero_examples = []
 
-    # Capture-clock hygiene, §6.1a. The capture timestamp comes from
-    # Python's time.time_ns() — CLOCK_REALTIME, NTP-disciplined, and
-    # therefore able to step backwards mid-capture.
+    # Capture-clock hygiene. The capture timestamp comes from Python's
+    # time.time_ns() — CLOCK_REALTIME, NTP-disciplined, and therefore
+    # able to step backwards mid-capture.
     #
-    # Tracked over the *payload* sequence rather than over raw lines,
-    # because that is the sequence the converter writes and therefore the
-    # one build_replay_schedule consumes. A non-payload line between two
-    # payload messages is not a gap in the schedule.
+    # Compared between consecutive payload messages; a non-payload line
+    # between them is skipped. The converter refuses any file containing
+    # a line its parser rejects, non-payload lines included, so for every
+    # capture that becomes a .bin the two sequences are the same.
     previous_capture_ns = None
     backwards_steps = 0
     clamped_ns = 0
@@ -140,9 +122,6 @@ def inspect_capture(path: Path) -> None:
                     line.rstrip("\n").split("\t", 1)
                 )
 
-                # Kept, not discarded: this is the clock §6.1a is
-                # about, and it used to be parsed only to prove it was
-                # an integer.
                 capture_ns = int(capture_timestamp)
 
                 message = json.loads(raw_message)
