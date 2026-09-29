@@ -1,22 +1,22 @@
-// Unit tests for the replay producer (§7.3a, §7.7a, §6.5a).
+// test_replay_producer.cpp: tests for run_replay, the loop that plays a
+// capture slice into a queue on a fixed schedule.
 //
-// Why this file exists: before it, replay_producer.hpp was included by
-// exactly one translation unit, measure_pacing_floor.cpp, which drives a
-// null sink that accepts every push. The rejection path had therefore
-// never executed. That path is where §6.5a's entire correctness oracle
-// gets its precondition — sequence numbers are assigned *before* the push
-// attempt, so an abandoned record still consumes one and leaves a hole in
-// the consumer-observed stream. If that were wrong the oracle would be
-// vacuous rather than failing, which is the worst way for it to be wrong.
+// The queue is StubQueue, which rejects exactly the push attempts a test
+// lists. The cases cover every push accepted, every push rejected, drops
+// ending the run, drops starting it and two in a row, a second run whose
+// sequence continues from the first, the capture_index mapping on a slice
+// with a non-zero sequence origin, and a run on a real fixed-rate
+// schedule. The last case runs each of run_replay's three preconditions
+// in a forked child and checks it aborts with its own message.
 //
-// The queue here is a stub with an explicit list of which push attempts
-// fail. That is deliberate over a "reject every Nth" rule: it lets each
-// test state exactly which records are abandoned, including the awkward
-// cases at the two ends of the run and the consecutive-drop case, none of
-// which a modulo rule reaches without contortion.
+// Failures are counted rather than returned on, so a single run reports
+// every broken case; the exit status is 1 if any check failed. No check
+// depends on speed, and StubQueue copies every accepted record into a
+// vector.
 //
-// No timing claim is made by anything in this file. StubQueue allocates
-// and copies on every accepted push. It is a correctness fixture.
+// Related: replay_producer.hpp (the code under test), replay_schedule.hpp
+// (the schedules), record.hpp (Record), test_child_process.hpp
+// (run_in_child).
 
 #include "record.hpp"
 #include "replay_producer.hpp"
@@ -65,9 +65,11 @@ void check_u64(
 }
 
 
-// A queue satisfying only the part of the interface run_replay uses:
-// try_push and full_rejections. Rejections are scripted by index of the
-// push attempt, so every test says plainly which records it abandons.
+// Implements only what run_replay calls: try_push and full_rejections.
+// Rejections are listed by push attempt, and the attempt index is the
+// record index because run_replay pushes each record once and never
+// retries. A list rather than a reject-every-Nth rule, so a test can
+// abandon two records in a row, which no every-Nth rule with N > 1 can.
 class StubQueue {
 public:
     explicit StubQueue(std::vector<bool> reject_attempt)
@@ -107,11 +109,10 @@ private:
 };
 
 
-// Synthetic capture records with identical timestamps, so every gap is
-// zero and build_replay_schedule produces an all-zero offset vector. The
-// run then proceeds as fast as the machine allows, which keeps these
-// tests sub-millisecond. Pacing is measure_pacing_floor's subject, not
-// this file's; one test below uses a real rate to exercise spin_until.
+// Every record gets the same capture_wall_time_ns, the field
+// build_replay_schedule takes its gaps from, so the schedule is all zeros
+// and no record waits. Only the paced case gives spin_until a deadline to
+// wait for.
 std::vector<CaptureRecord> make_slice(std::size_t count)
 {
     std::vector<CaptureRecord> slice(count);
@@ -132,14 +133,17 @@ std::vector<CaptureRecord> make_slice(std::size_t count)
 }
 
 
-// The reconciliation §6.5a asks for, written out in full.
+// The sequence numbers missing from the delivered stream, counted before
+// the first delivery, between deliveries and after the last. Their sum
+// equals dropped_records because run_replay assigns a sequence before the
+// push, so an abandoned record leaves a hole. Drops at either end leave no
+// hole between delivered records, so the two boundary terms need
+// first_sequence and slice_length from the stats.
 //
-// Note what the full form exposes: §6.5a describes summing "consumer-
-// observed gap widths", which reaches only the gaps *between* delivered
-// records. Records abandoned before the first delivery, or after the
-// last, leave no interior gap at all and are invisible to that sum. The
-// boundary terms below are what make the identity actually hold, and the
-// leading/trailing tests would fail without them.
+// The sum alone does not catch a producer that assigns only on success:
+// the delivered stream is then dense, the trailing term becomes
+// slice_length - pushed, and that equals dropped_records. The leading
+// case's first-sequence and width checks, and the mapping check, do.
 std::uint64_t reconcile_gaps(
     const std::vector<Record>& delivered,
     std::uint64_t first_sequence,
@@ -194,6 +198,8 @@ ReplayStats drive(
         queue,
         std::span<const CaptureRecord>(slice.data(), slice.size()),
         schedule,
+        // Non-zero: Record's value-initialisation leaves symbol_id 0, so a
+        // producer that skipped the stamp would pass a check against 0.
         7,
         slice_start,
         first_sequence,
@@ -202,8 +208,8 @@ ReplayStats drive(
 }
 
 
-// Every push accepted. Establishes the baseline the drop tests deviate
-// from, and checks the fields the producer owns (§7.3a).
+// Every push accepted: the baseline the drop cases deviate from. Checks
+// every field run_replay writes into a Record.
 void test_all_accepted()
 {
     const char* name = "producer/all_accepted";
@@ -273,14 +279,16 @@ void test_all_accepted()
           "replay_intended_send_ns was not t0 + schedule offset");
     check(name, symbol_ok, "symbol_id was not stamped by the producer");
 
-    // §7.3: the tail bytes are explicit and zeroed so nothing memcmps or
-    // hashes a Record over indeterminate padding.
+    // The tail bytes are a member rather than padding, and record.hpp
+    // zeroes them, so they never hold an indeterminate value; run_replay
+    // must leave them zero.
     check(name, reserved_zeroed, "Record::reserved was not zeroed");
 }
 
 
-// Rejections landing on the last attempt, so the run ends with an
-// abandoned record. Interior gaps alone under-count here.
+// Every third attempt rejected, the last included, so the run ends on an
+// abandoned record. The gaps between delivered records alone would sum to
+// one short here.
 void test_trailing_drop_reconciles()
 {
     const char* name = "producer/trailing_drop";
@@ -310,9 +318,10 @@ void test_trailing_drop_reconciles()
     check_u64(name, "pushed + dropped", stats.pushed +
               stats.dropped_records, count);
 
-    // §7.7a: under drop-newest with no retry, every rejection is a drop.
-    // The two counters are separate by design and must agree here and
-    // only here — harness A retries, so its rejections are not drops.
+    // run_replay abandons a rejected record instead of retrying, so every
+    // rejection is a drop and the two counters must agree. They are
+    // separate fields because a caller that retries has rejections without
+    // drops.
     check_u64(name, "full_rejections == dropped_records",
               stats.full_rejections, stats.dropped_records);
 
@@ -329,8 +338,8 @@ void test_trailing_drop_reconciles()
         stats.dropped_records
     );
 
-    // The last attempt was rejected, so there is a trailing hole and the
-    // interior-only sum is short by exactly one.
+    // Guards the input: if the last record were delivered, the trailing
+    // term would be zero and this case would not exercise it.
     check(
         name,
         delivered.back().sequence != count - 1,
@@ -339,11 +348,9 @@ void test_trailing_drop_reconciles()
 }
 
 
-// Leading drops and a run of consecutive drops. The consecutive case is
-// the one that shows gap *width* is not always one: §6.5a's "each drop
-// produces a gap of width exactly 1" holds per abandoned record, but two
-// adjacent abandonments merge into a single gap of width two. The
-// invariant is the sum, not the individual widths.
+// Three drops at the start and two in a row mid-run. Each abandoned record
+// adds one to the sum, but two adjacent ones leave a single gap of width
+// two, so the invariant is the sum, not the individual widths.
 void test_leading_and_consecutive_drops_reconcile()
 {
     const char* name = "producer/leading_and_consecutive";
@@ -432,11 +439,11 @@ void test_all_rejected()
 }
 
 
-// §7.3a's deciding argument for a producer-owned counter: six hours of
-// capture is far short of harness C's stress run, so the file is replayed
-// repeatedly. A sequence baked in at parse time would reset to zero at
-// every lap — a backwards jump at exactly the boundary where the oracle
-// should be looking for real failures.
+// Two runs over the same slice, the second starting where the first
+// stopped. run_replay numbers records from the first_sequence it is given,
+// not from their position in the slice, so a caller that starts each run
+// at the previous run's first_sequence + slice_length gets one increasing
+// sequence across the laps.
 void test_sequence_continues_across_laps()
 {
     const char* name = "producer/lap_continuity";
@@ -484,23 +491,15 @@ void test_sequence_continues_across_laps()
 }
 
 
-// §7.3a's traceability mapping, on a slice that starts partway into the
-// file and a sequence that does not start at zero.
-//
-// NOTE, and it is a defect in the plan rather than in the code: §7.3a
-// gives the slice form as
-//
-//     capture_index = slice_start + (sequence % slice_length)
-//
-// which is only correct when first_sequence is zero or an exact multiple
-// of slice_length. On a second lap, or any run whose sequence origin is
-// offset, it silently returns the wrong record. The form that holds in
-// general is
+// The mapping from a delivered sequence back to its capture record, on a
+// slice that starts partway into the file and a sequence origin that is
+// not zero:
 //
 //     capture_index = slice_start + ((sequence - first_sequence) % slice_length)
 //
-// and ReplayStats already records first_sequence, so the struct
-// anticipates a term the documented formula does not use.
+// Without the "- first_sequence" term the mapping is right only when
+// first_sequence is a multiple of slice_length, and otherwise returns the
+// wrong record with nothing to show it.
 void test_capture_index_mapping()
 {
     const char* name = "producer/capture_index_mapping";
@@ -557,9 +556,10 @@ void test_capture_index_mapping()
     check(name, mapping_ok,
           "capture_index mapping did not recover the source record");
 
-    // The form §7.3a actually prints, shown to be wrong on this input.
-    // If this ever starts agreeing, the test inputs have drifted into the
-    // special case and the check has stopped meaning anything.
+    // The form without "- first_sequence" must disagree with the correct
+    // one here. If it ever agrees, the inputs have drifted into the case
+    // where the two coincide, and the mapping check above could no longer
+    // tell them apart.
     const std::uint64_t documented =
         stats.slice_start +
         (queue.accepted().front().sequence % stats.slice_length);
@@ -578,9 +578,11 @@ void test_capture_index_mapping()
 }
 
 
-// Exercises spin_until and the lag statistics on a real schedule.
-// 20,000 records at 5 MHz is a 4 ms run, well inside the ~50M/s pacing
-// floor measured by measure_pacing_floor, so the producer should keep up.
+// A real fixed-rate schedule, so spin_until has later deadlines to wait
+// for: 20,000 records at 5 MHz, a 4 ms run. Besides the push count and
+// the clock advancing, the checks are the order of the lag percentiles
+// and the source of the intended send times; none depends on the producer
+// keeping up.
 void test_paced_run_lag_statistics()
 {
     const char* name = "producer/paced_lag";
@@ -608,10 +610,10 @@ void test_paced_run_lag_statistics()
     check(name, stats.finished_ns > stats.t0_ns,
           "run did not advance the monotonic clock");
 
-    // Intended send times must come from the precomputed schedule, never
-    // from the clock at push time (§6.4). If they were computed at push
-    // time the producer's own stalls would slide the schedule with them
-    // and coordinated omission would be back.
+    // Intended send times must come from the schedule fixed before the run,
+    // never from the clock when a record is reached: then a producer stall
+    // would slide the schedule with it and never show as latency
+    // (coordinated omission).
     bool schedule_driven = true;
 
     for (std::size_t i = 0; i < queue.accepted().size(); ++i) {
@@ -626,10 +628,9 @@ void test_paced_run_lag_statistics()
 }
 
 
-// The preconditions abort, so they cannot be checked in-process
-// directly. run_in_child does the forking; the rationale for forking
-// rather than using ctest's WILL_FAIL lives with it in
-// test_child_process.hpp.
+// The preconditions abort, so each is run in a forked child by
+// run_in_child; test_child_process.hpp says why a fork rather than ctest's
+// WILL_FAIL.
 
 void expect_abort(
     const char* what,
@@ -718,7 +719,8 @@ void body_short_lag()
 }
 
 
-// §8.0b: confirming a check is armed rather than trusting that it is.
+// Runs each precondition to confirm it fires, rather than trusting that it
+// does.
 void test_preconditions_are_armed()
 {
     expect_abort(
