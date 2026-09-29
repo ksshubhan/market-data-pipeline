@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""Post-process harness B sweeps into the B1 comparison (§6.4b, §10).
+"""Post-process harness B sweeps into the B1 comparison.
 
 Reads one or more harness_b CSVs, medians each datapoint across passes,
-and prints the latency-vs-load comparison. Optionally writes the two
-graphs §10 says carry the repo.
+and prints the latency-vs-load comparison. If matplotlib is installed it
+also writes the two graphs the README shows, into results/.
 
-Deliberately offline. §6.4b forbids histogram mutation on the measured
-path: the harness writes raw dequeue timestamps and everything derived
-happens here, where it costs nothing and preserves the ordering
-information a hot-path histogram would have thrown away.
+Deliberately offline. harness_b's consumer records raw dequeue
+timestamps; latencies and percentiles are computed only after both
+threads join, so no histogram is built on the measured path. This
+script medians those percentiles across passes and draws the graphs.
 
 Usage:
     python3 tools/analyse_harness_b.py results/harness_b_spin8192_*.csv \\
@@ -18,6 +18,12 @@ Standard library only, except matplotlib for the graphs. If matplotlib
 is absent the tables still print and the graphs are skipped with a note —
 the numbers are the result, the plots are presentation.
 """
+
+# Input: src/harness_b.cpp writes one CSV row per pass, arm and rate,
+# with the six latency percentiles and each validity gate's verdict.
+# Output: stdout tables, and the two PNGs that open the README's Results.
+# The graph paths are relative, so run it from the repository root, as
+# the README's reproduce block does.
 
 import csv
 import statistics
@@ -40,6 +46,8 @@ def read_sweep(path):
                 if ":" in body:
                     key, _, value = body.partition(":")
                     key = key.strip()
+                    # A key never contains a space, so a prose note
+                    # with a colon in it is not taken for metadata.
                     if key and " " not in key:
                         meta[key] = value.strip()
             else:
@@ -51,6 +59,8 @@ def read_sweep(path):
 
 def config_label(meta, rows):
     """A short name for what this file's mutex arm was."""
+    # Read from the rows: the header's spin_count line carries a note
+    # after the number.
     spins = {r["spin_count"] for r in rows if r["arm"] == "mutex"}
     spins.discard("0")
 
@@ -75,6 +85,8 @@ def collect(paths):
 
         for row in rows:
             rate = float(row["rate_hz"])
+            # Every file's spsc rows share one key: the arm is configured
+            # identically in each, so two files give up to six passes a cell.
             config = label if row["arm"] == "mutex" else "spsc"
 
             counts[(config, rate)][1] += 1
@@ -119,6 +131,8 @@ def main(argv):
     paths = argv[1:]
     series, counts, metas, spsc_by_file = collect(paths)
 
+    # From counts, which include invalid rows, so a rate where every
+    # datapoint failed a gate still gets a row in every table.
     configs = sorted({c for (c, _) in counts})
     rates = sorted({r for (_, r) in counts})
 
@@ -137,7 +151,7 @@ def main(argv):
 
     print()
     print("=" * 78)
-    print("VALID DATAPOINTS  (valid/total across passes; §6.4's two gates)")
+    print("VALID DATAPOINTS  (valid/total across passes; drop and lag gates)")
     print("=" * 78)
     header = f"{'rate':>12}  " + "  ".join(f"{c:>16}" for c in configs)
     print(header)
@@ -168,7 +182,7 @@ def main(argv):
     for metric, title in [
         ("p50_ns", "MEDIAN LATENCY (p50)"),
         ("p99_ns", "TAIL LATENCY (p99)"),
-        ("p999_ns", "TAIL LATENCY (p99.9)  <- the headline metric, §3"),
+        ("p999_ns", "TAIL LATENCY (p99.9)"),
         ("max_ns", "MAX LATENCY"),
     ]:
         print()
@@ -217,6 +231,7 @@ def main(argv):
 
     try:
         import matplotlib
+        # Agg renders straight to files, so no display is needed.
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
     except ImportError:
@@ -250,7 +265,9 @@ def main(argv):
     print("\nwrote results/b1_latency_vs_load.png")
 
     # Graph 2: percentile distribution at the rate with the most
-    # configurations valid — chosen by the data, not by hand.
+    # configurations valid, chosen by the data rather than by hand. A tie
+    # goes to the lowest such rate: rates ascend, and only a strictly
+    # larger count replaces the pick.
     best_rate, best_count = None, -1
     for rate in rates:
         n = sum(
