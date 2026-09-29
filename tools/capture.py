@@ -1,3 +1,12 @@
+# Records raw Binance websocket messages for the pipeline to parse and
+# replay. One file per stream in captures/, named symbol_market_stream_RUN
+# with RUN the start time in UTC; each line is the local receive time in
+# nanoseconds, a tab, then the message exactly as received. Runs until
+# Ctrl-C, then writes a summary of messages and connections per stream;
+# an events log records each connect and disconnect as it happens. Run it
+# from the repository root, where captures/ is gitignored.
+# src/convert_capture.cpp turns a futures bookTicker file into a .bin.
+
 import asyncio
 import time
 from datetime import datetime, timezone
@@ -7,6 +16,9 @@ import websockets
 
 
 
+# Only the two futures bookTicker streams are parsed. Depth is recorded
+# but not parsed: it is a stateful stream, kept so that a question about
+# one has a file behind it. Spot is outside the futures pipeline's scope.
 STREAMS = [
     {
         "symbol": "btcusdt",
@@ -80,6 +92,8 @@ def log_event(message):
 
     print(line)
 
+    # Opened and closed per event, so the log is complete even if the
+    # process is killed.
     with open(EVENT_LOG, "a") as log:
         log.write(line + "\n")
         log.flush()
@@ -109,6 +123,10 @@ async def capture_stream(config):
     )
 
 
+    # Opened once for the whole run, so every reconnect appends to the
+    # same file with nothing in it to mark the gap; the events log records
+    # each reconnect. Iterating websockets.connect opens a new connection
+    # each time round, after a close frame or a dropped connection alike.
     with open(filename, "w") as file:
         async for websocket in websockets.connect(url):
             STATS[key]["connection_count"] += 1
@@ -123,11 +141,22 @@ async def capture_stream(config):
 
             try:
                 async for message in websocket:
+                    # Wall clock, so the stamp can be compared with
+                    # Binance's E and T up to the clock offset, and can
+                    # step backwards if NTP corrects it. It is taken when
+                    # this coroutine receives the message, after the
+                    # library has read and decoded it, on one event loop
+                    # shared by every stream.
                     receive_time_ns = time.time_ns()
 
                     file.write(f"{receive_time_ns}\t{message}\n")
                     STATS[key]["message_count"] += 1
 
+                    # Flushed when a message arrives at least a second
+                    # after the last flush, and at every disconnect below;
+                    # Ctrl-C closes the file, which flushes it. A killed
+                    # process loses what came after the last flush, which
+                    # on a quiet stream can be older than a second.
                     if time.monotonic() - last_flush >= 1.0:
                         file.flush()
                         last_flush = time.monotonic()
@@ -166,4 +195,5 @@ try:
 except KeyboardInterrupt:
     print("\nCapture stopped.")
 finally:
+    # Written after Ctrl-C or an exception; a killed process writes none.
     write_summary()
