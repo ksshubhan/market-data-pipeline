@@ -818,9 +818,7 @@ independently corroborates BTCUSDT's `stepSize` from the `exchangeInfo`
 snapshot, `env/binance_futures_exchangeInfo_20260820.json`, whose fetch
 time is recorded in `env/binance_futures_exchangeInfo_20260820.fetched_at.txt`.
 **No crossed or locked books in the entire capture** — bid is
-strictly below ask on every message, which also rules out the
-case-sensitivity trap where a `tolower` in the key path silently swaps
-price and quantity.
+strictly below ask on every message.
 
 **Byte-identical output across two conversions** six days apart on
 different commits: 13,749,492 records identical, with only the provenance
