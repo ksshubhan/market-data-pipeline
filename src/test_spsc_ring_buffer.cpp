@@ -1,3 +1,20 @@
+// test_spsc_ring_buffer.cpp: tests for SpscRingBuffer.
+//
+// Single-threaded cases check FIFO order and one counted rejection when
+// full on three queues: the default (acquire-release, cached), a seq_cst
+// one and an uncached one. The default and uncached queues are also
+// checked once their slot indices wrap. A Record is pushed and popped to
+// check every field but reserved survives the slot copy. Two two-thread
+// cases, on the default and the uncached queue, hand 1,000,000 values from
+// a producer thread to a consumer thread and check each arrives in order.
+//
+// The first failed check prints a FAIL line to stderr and the run exits 1
+// there.
+//
+// Related: spsc_ring_buffer.hpp (the code under test), harness_c.cpp (the
+// long-run stress test), c1_relaxed_publication.cpp (the broken-ordering
+// control).
+
 #include "spsc_ring_buffer.hpp"
 #include "record.hpp"
 #include <atomic>
@@ -18,9 +35,9 @@ bool check(bool condition, const char* message)
     return true;
 }
 
-// A4: the uncached arm must behave identically. Same FIFO order, same
-// full-capacity behaviour, same rejection accounting - the only
-// difference is when the opposite index is read.
+// A4's uncached arm must behave exactly like the cached queue: same FIFO
+// order, same rejection when full, same count. Only when it reads the
+// opposite index differs.
 bool test_uncached_queue()
 {
     using Queue = SpscRingBuffer<
@@ -403,11 +420,10 @@ int main()
 
         SpscRingBuffer<std::uint64_t, 1024> queue;
 
-        // A correctness failure must terminate this test, not deadlock it.
-        // If the consumer returns early on a mismatch and the producer has
-        // no way to learn that, the producer spins for ever on a full
-        // queue and producer.join() never returns — so the test's failure
-        // mode becomes a hang rather than a report.
+        // A mismatch must end this test, not deadlock it. The consumer
+        // returns on the first mismatch, so the producer checks failed
+        // whenever the queue is full; without that it would spin for ever
+        // on a full queue and producer.join() would never return.
         std::atomic<bool> failed{false};
 
         std::thread consumer([&] {
@@ -415,9 +431,10 @@ int main()
                 std::uint64_t value = 0;
 
                 while (!queue.try_pop(value)) {
-                    // Test harness retries on empty. The producer cannot
-                    // exit early while the consumer is still running, so
-                    // this loop needs no escape hatch.
+                    // Retries on empty. The producer exits early only after
+                    // the consumer has set failed and returned, so this spin
+                    // never waits on an exited producer. A queue that stops
+                    // delivering still hangs it.
                 }
 
                 if (value != expected) {
