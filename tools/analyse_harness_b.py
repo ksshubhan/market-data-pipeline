@@ -119,8 +119,8 @@ def main(argv):
     paths = argv[1:]
     series, counts, metas, spsc_by_file = collect(paths)
 
-    configs = sorted({c for (c, _) in series})
-    rates = sorted({r for (_, r) in series})
+    configs = sorted({c for (c, _) in counts})
+    rates = sorted({r for (_, r) in counts})
 
     print("=" * 78)
     print("PROVENANCE")
