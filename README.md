@@ -690,10 +690,9 @@ that as already overdue and sends immediately, destroying pacing with no
 visible symptom. `test_replay_producer` covers the rejection path, which
 had never executed before that file existed, and which is where the
 sequence oracle gets its precondition. `test_convert_capture` drives
-the converter as a child process across 898 lines, because exit statuses,
-stderr and what is left on disk do not survive being called as a
-function — and its own header records the three of the converter's ten
-guards it cannot reach.
+the converter as a child process, because exit statuses, stderr and
+what is left on disk do not survive being called as a function; its
+header names the failure paths it does not reach.
 
 `harness_b`'s three run-time consistency checks abort rather than warn,
 and each has been shown to fire: `evidence/harness_b_guards_20260907.txt`
