@@ -688,8 +688,8 @@ capture-clock step wraps instead of clamping, and the wrapped gap sends
 the schedule silently *backwards* rather than forwards — a producer reads
 that as already overdue and sends immediately, destroying pacing with no
 visible symptom. `test_replay_producer` covers the rejection path, which
-had never executed before that file existed, and which is where the
-sequence oracle gets its precondition. `test_convert_capture` drives
+had never executed before that file existed, and checks that a rejected
+record still uses a sequence number. `test_convert_capture` drives
 the converter as a child process, because exit statuses, stderr and
 what is left on disk do not survive being called as a function; its
 header names the failure paths it does not reach.
