@@ -1,55 +1,42 @@
 #!/usr/bin/env python3
 """Characterise the tail of a harness B run from its slow-sample dump.
 
-Reads the dump written by `harness_b ... dump` and asks what shape the
-tail has, rather than assuming one.
+Reads the dump written by `harness_b ... dump`, one row for every
+message with latency >= 1000 ns, for spsc and the tuned mutex at 100k
+and 1M records/s, and asks what shape the tail has rather than
+assuming one.
 
-WHAT THE FIRST VERSION GOT WRONG, kept because the mistake is instructive.
+Slow messages come in bursts: one event stalls the consumer for several
+microseconds and every message due during it is delivered late
+together. So the questions are how often stalls happen, how long they
+last, and how many messages each disturbs.
 
-The first version tested whether slow samples were evenly spaced — by
-index or in time — to separate a per-message cost from a per-time one. It
-took the median gap between consecutive slow samples and compared that
-across two offered rates.
-
-That assumes the slow samples are spaced at all. They are not. The real
-data has a median index gap of 1 and a mean of 388, CV 3.4: most slow
-samples sit immediately beside another slow sample, with long quiet
-stretches between groups. A median gap of 1 on a bursty series says
-"clusters exist", not "the period is one message" — and comparing that
-median across rates produced a confident verdict about nothing.
-
-The burst structure is itself the finding. One event stalls the consumer
-for several microseconds and every message arriving during the stall is
-delivered late together. So the questions worth asking are how often the
-stalls happen, how long they last, and how many messages each disturbs.
-
-WHAT THE SECOND VERSION GOT WRONG, and why two columns are named the way
-they are.
-
-This script reports two per-cluster durations and they measure different
-things. The first version called one of them `stall duration`, and that
-name was read straight into the project plan as the length of the
-scheduling event. It is not, and the numbers said so plainly: median
-values of 0 ns and 83 ns cannot be scheduling events.
+Two per-cluster durations are reported, and they measure different
+things:
 
   drain span    c[-1][1] - c[0][1], the span of *dequeue* timestamps
-                across a cluster. How long the consumer took to work
-                through the backlog once it got the CPU back. It is
-                near-zero when the backlog drains at full speed, which
-                is the normal case, so a small value here says nothing
-                about how long the CPU was away.
+                across a cluster: how long the consumer took to work
+                through the backlog once it got the CPU back. Near zero
+                when the backlog drains at full speed, which is the
+                normal case, so it says nothing about how long the CPU
+                was away.
 
-  stall length  max latency inside the cluster. A message delayed by X
-                waited through the whole stall plus its own queueing, so
-                this is a *lower bound* on how long the CPU was away —
-                hence the (>=). This is the column to quote.
-
-The rename is the fix. The old name licensed the misreading and nothing
-else in the output contradicted it.
+  stall length  the worst latency inside the cluster. With the queue
+                empty as the stall begins, the worst-delayed message is
+                the first one due after it began, up to one period in;
+                it waits out the rest of the stall and is served first.
+                So its latency is a *lower bound* on how long the CPU
+                was away, to within one dequeue, and can fall short of
+                it by up to one period. Hence the (>=). This is the
+                column to quote.
 
 Usage:
     python3 tools/analyse_tail_samples.py results/tail_samples_*.csv
 """
+
+# Input: one CSV from harness_b's dump mode (src/harness_b.cpp); give
+# exactly one path, or the usage text prints. Output: stdout only; the
+# committed copy is results/tail_stalls_*.txt.
 
 import csv
 import statistics
@@ -64,10 +51,13 @@ from collections import defaultdict
 # that happened to contain a fast message.
 CLUSTER_GAP = 4
 
-# Above this fraction the cost is not a stall at all — it is being paid
-# on most messages, which is a per-message cost wearing a tail's clothing.
+# At or above this fraction the cost is not a stall at all — it is being
+# paid on a large share of messages, which is a per-message cost wearing
+# a tail's clothing.
 PERVASIVE_FRACTION = 0.10
 
+# The dump records no slice length, so this must match harness_b's
+# kSliceLength.
 SLICE_LENGTH = 2_000_000
 
 
@@ -163,13 +153,13 @@ def main(argv):
 
         # Dequeue timestamps, so this is backlog drain time, not stall
         # length. The consumer was already running again when the first
-        # of these was recorded. Named for what it is; see the docstring
-        # for what happened when it was not.
+        # of these was recorded.
         drain_spans = [c[-1][1] - c[0][1] for c in clusters]
 
-        # Lower bound on how long the CPU was away: the worst-delayed
-        # message in a cluster waited through the stall plus its own
-        # queueing.
+        # Lower bound on how long the CPU was away, to within one
+        # dequeue: the worst-delayed message was due up to one period
+        # after the stall began, so it waited out less than all of it,
+        # and was served first.
         stall_lengths = [max(r[2] for r in c) for c in clusters]
 
         starts = [c[0][1] for c in clusters]
@@ -194,10 +184,11 @@ def main(argv):
               f"   p99 {fmt(latency_p99):>9}   max {fmt(latency_max):>9}")
 
         # Clustering only means something when the slow samples are a
-        # minority. If most messages are slow, adjacency is guaranteed by
-        # density rather than by a stall, and every message merges into
-        # one meaningless "stall" spanning the whole run. Printing those
-        # numbers anyway would invite someone to quote them.
+        # minority. At high density, slow samples sit within CLUSTER_GAP
+        # of each other because there are so many of them, not because a
+        # stall delivered them together, so the stall statistics would
+        # describe the density. Printing them would invite someone to
+        # quote them.
         if fraction >= PERVASIVE_FRACTION:
             print("    (stall statistics omitted: at this density"
                   " adjacency is")
