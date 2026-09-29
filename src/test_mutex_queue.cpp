@@ -1,3 +1,23 @@
+// test_mutex_queue.cpp: tests for MutexQueue, the mutex and condition
+// variable baseline.
+//
+// The first block checks the non-blocking interface on a capacity-4
+// queue: empty on construction, four pushes accepted and a fifth rejected
+// and counted, FIFO order, and order kept once the slot indices wrap. The
+// rest check wait_nonempty(). W1 and W2 wake a consumer that is confirmed
+// to be blocked, by a push and by close(); the later blocks do the same
+// without waiting for it to block, and check that data queued before
+// close() is still delivered.
+//
+// A failed check prints a FAIL line to stderr and the run exits 1 there.
+//
+// tools/run_mutex_queue_controls.py checks this file's md5 before it
+// runs, so any edit here, comments included, needs its TEST_MD5 updated.
+//
+// Related: mutex_queue.hpp (the code under test),
+// tools/run_mutex_queue_controls.py (runs this suite against ten
+// deliberate faults in mutex_queue.hpp).
+
 #include "mutex_queue.hpp"
 
 #include <chrono>
@@ -23,11 +43,11 @@ bool check(bool condition, const char* message)
 
 using WakeQueue = MutexQueue<std::uint64_t, 4>;
 
-// A fifth of the runner's 10 s per-run limit, so a failing run exits on
-// its own FAIL line rather than the runner's timeout, and at least five
-// orders of magnitude above the ~10 us spin and ~1.3 us park/wake it has
-// to cover. That margin is a judgement; the controls runner's 100-run
-// unmutated baseline is the evidence that it produces no false FAIL.
+// Microseconds would do on an idle machine: the consumer's spin and a
+// park and wake each take a few. Two seconds leaves room for a loaded
+// machine descheduling either thread, and is still a fifth of the controls
+// runner's 10 s per-run timeout, so a failing run exits on its own FAIL
+// line rather than being killed.
 constexpr auto kDeadline = std::chrono::seconds(2);
 
 
@@ -54,10 +74,10 @@ bool wait_for_park(const WakeQueue& queue)
 
 
 // For failures while the consumer may still be blocked. It cannot be
-// joined (that hangs), destroyed while joinable (std::terminate, exit
-// 134), or rescued by close() when close()'s notify is what is under
-// test. check() writes to std::cerr, which is unit-buffered, so the FAIL
-// line is out before _Exit skips the destructors.
+// joined (that hangs), destroyed while joinable (std::terminate), or
+// rescued by close() when close()'s notify is what is under test. check()
+// writes to std::cerr, which is unit-buffered, so the FAIL line is out
+// before _Exit skips the destructors.
 [[noreturn]] void fail_with_blocked_consumer(const char* message)
 {
     check(false, message);
@@ -143,11 +163,11 @@ int main()
         }
     }
 
-    // W1: the consumer is confirmed blocked before the push, so the push
-    // is the only thing that can wake it. The blocks after W2 push or
-    // close immediately; their consumer parked first in 0 of 200 runs on
-    // 19 Sep, so a deleted notify_one passes them. These two exist so
-    // that it cannot.
+    // W1: the consumer is confirmed blocked before the push, so the push's
+    // notify is the only thing that can wake it. The blocks after W2 push
+    // or close straight after starting the consumer, which then finds the
+    // data or the close during its spin and never blocks, so a missing
+    // notify_one goes unnoticed there. W1 and W2 exist so that it cannot.
     {
         WakeQueue queue;
 
