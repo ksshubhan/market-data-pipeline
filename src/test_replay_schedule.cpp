@@ -1,3 +1,18 @@
+// test_replay_schedule.cpp: tests for build_replay_schedule and
+// build_fixed_rate_schedule.
+//
+// Pure arithmetic: no threads and no clock. Each case builds a schedule
+// from hand-written timestamps or a rate and checks the offsets and the
+// backwards-step counters by value. The last case runs each rate and
+// compression precondition in a forked child and checks it aborts with
+// its own message.
+//
+// Failures are counted rather than returned on, so a single run reports
+// every broken case; the exit status is 1 if any check failed.
+//
+// Related: replay_schedule.hpp and replay_schedule.cpp (the code under
+// test), test_child_process.hpp (run_in_child).
+
 #include "replay_schedule.hpp"
 #include "test_child_process.hpp"
 
@@ -8,11 +23,8 @@
 #include <vector>
 
 
-// Pure arithmetic, no threads and no clock. That is the point of having
-// split the schedule out of the producer: the trap these tests exist for
-// could otherwise only be inferred from timing behaviour.
-//
-// No assert() anywhere — every configured build defines NDEBUG.
+// No assert(): both CMake presets build RelWithDebInfo, which defines
+// NDEBUG, so in their builds an assert would compile to nothing.
 
 namespace {
 
@@ -78,9 +90,8 @@ void test_monotonic_matches_endpoint_form()
     check_u64(name, "clamped_ns", schedule.clamped_ns, 0);
     check_u64(name, "span_ns", schedule.span_ns, 8000);
 
-    // With no backwards steps the cumulative and endpoint forms agree,
-    // which is the fact §6.1a says to assert at load time rather than
-    // assume.
+    // With no backwards steps, at compression 1.0, accumulating the gaps
+    // and subtracting the endpoints give the same span.
     const std::uint64_t endpoint_span =
         records.back().capture_wall_time_ns -
         records.front().capture_wall_time_ns;
@@ -89,12 +100,10 @@ void test_monotonic_matches_endpoint_form()
 }
 
 
-// The test this file exists for.
-//
-// A backwards step is clamped to zero and counted. Rewriting the clamp as
-// max(0, current - previous) makes this test fail loudly: the operands
-// are unsigned, so the subtraction wraps and offset[2] becomes a value
-// near 2^64 instead of 1000.
+// The case the clamp exists for. A backwards step is clamped to zero and
+// counted. Written as max(0, current - previous) the operands are
+// unsigned, the subtraction wraps, and offset[2] comes out as 700 instead
+// of 1000.
 void test_backwards_step_is_clamped_not_wrapped()
 {
     const char* name = "schedule/backwards_step";
@@ -118,14 +127,13 @@ void test_backwards_step_is_clamped_not_wrapped()
     check_u64(name, "backwards_steps", schedule.backwards_steps, 1);
     check_u64(name, "clamped_ns", schedule.clamped_ns, 300);
 
-    // The schedule must never go backwards. This is the check that
-    // names the real failure mode of max(0, current - previous): the
-    // wrapped gap is near 2^64, and adding it wraps the accumulator back
-    // round, so the schedule silently steps *backwards* rather than
-    // jumping forwards. A producer reading that offset believes the
-    // message is already overdue and sends it immediately, which destroys
-    // pacing with no visible symptom. (The forward jump people expect
-    // happens in the endpoint form, not the cumulative one.)
+    // The schedule must never step backwards. With the wrapping form it
+    // does: the wrapped gap is near 2^64 and adding it wraps the offset
+    // back round, so the offsets reproduce the capture clock's correction.
+    // A producer then finds every record scheduled before its current
+    // clock reading already due and sends it at once. The wrapping form
+    // jumps forwards only for a record timestamped before the first one,
+    // whose offset lands near 2^64.
     bool monotonic = true;
 
     for (std::size_t i = 1; i < schedule.intended_offset_ns.size(); ++i) {
@@ -138,8 +146,8 @@ void test_backwards_step_is_clamped_not_wrapped()
     check(name, monotonic, "schedule went backwards across a clamped step");
 
     // The endpoint form gives 12000 - 10000 = 2000, the cumulative form
-    // gives 2300. They are not equivalent once a step has been clamped,
-    // which is why §6.1a forbids the endpoint form.
+    // gives 2300. They differ once a step has been clamped, which is why
+    // the offsets are accumulated rather than taken from the endpoints.
     const std::uint64_t endpoint_span =
         records.back().capture_wall_time_ns -
         records.front().capture_wall_time_ns;
@@ -152,9 +160,10 @@ void test_backwards_step_is_clamped_not_wrapped()
 }
 
 
-// A backwards step from a very large timestamp. If the subtraction were
-// performed before the comparison, the intermediate would wrap and the
-// resulting offset would be astronomically large.
+// A backwards step near the top of the uint64_t range. With the wrapping
+// form offset[2] comes out as 500. This case alone also catches
+// timestamps converted to double: doubles near 2^64 are 2048 apart, so
+// these timestamps all convert to the same value and every gap is 0.
 void test_backwards_step_near_uint64_max()
 {
     const char* name = "schedule/backwards_near_max";
@@ -233,9 +242,9 @@ void test_fixed_rate_has_no_drift()
     check_u64(name, "offset[100]", schedule.intended_offset_ns[100],
         1'000'000);
 
-    // The slice length fixed in §6.4b at the rate B1 sweeps around: two
-    // million records at 100k/s is exactly twenty seconds. Accumulating
-    // the period instead of computing from i would drift here.
+    // Two million records, the slice harness_b replays, at 100k/s, the
+    // lowest of its rates. The period is a whole 10,000 ns, so this case
+    // cannot detect accumulated rounding; the awkward rate below can.
     check_u64(
         name,
         "final offset",
@@ -261,7 +270,8 @@ void test_fixed_rate_has_no_drift()
     check(name, monotonic, "awkward rate broke monotonicity");
 
     // 1,000,000 periods of 3000.003 ns is 3,000,003,000 ns to the nearest
-    // nanosecond. An accumulated schedule would be off by microseconds.
+    // nanosecond. Accumulating the period rounded to 3000 ns would end
+    // 3,000 ns short.
     check_u64(
         name,
         "awkward final offset",
@@ -296,9 +306,8 @@ void test_degenerate_inputs()
     check(name, zero_count.intended_offset_ns.empty(),
         "zero count produced offsets");
 
-    // A zero count is legal and must stay legal. It used to share a
-    // condition with the rate check, and separating them is half of what
-    // the precondition work below is for.
+    // A zero count is not an error and returns an empty schedule; the
+    // rate guard must not reject it.
     check_u64(name, "zero count span", zero_count.span_ns, 0);
 
     // Compression of exactly 1.0 is the documented no-op and must not be
@@ -350,8 +359,8 @@ void body_negative_rate()
 }
 
 
-// Infinity divides a period to zero, producing the same all-at-t0
-// schedule a zero rate does. `rate_hz > 0.0` alone would let it through.
+// Infinity divides the period to zero, which would schedule every record
+// at t0. `rate_hz > 0.0` alone would let it through.
 void body_infinite_rate()
 {
     build_fixed_rate_schedule(
