@@ -29,10 +29,10 @@ The two non-atomic payload accesses, not the index. The same two lines
 LLVM's ThreadSanitizer named in evidence/c1_tsan_report.txt.
 
 Workload verified identical to the macOS runs: kCount is a hardcoded
-1'000'000 at test_spsc_ring_buffer.cpp lines 102 and 402, not read from
-the environment and not derived from hardware_concurrency. The 0.38 sec
-against 15.56 sec on a throttled x86 container is a speed difference,
-not a smaller test.
+1'000'000 in both two-thread tests in test_spsc_ring_buffer.cpp, not
+read from the environment and not derived from hardware_concurrency.
+The 0.38 sec against 15.56 sec on a throttled x86 container is a speed
+difference, not a smaller test.
 
 Result: two independently written race detectors, two operating systems,
 two standard libraries, one verdict — clean on the valid arms, and the
