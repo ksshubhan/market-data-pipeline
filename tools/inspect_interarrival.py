@@ -3,13 +3,13 @@
 
 TOOL_VERSION: inspect_interarrival/4 (B2)
 
-This is the analysis §6.5 B2 specifies, and it exists to *inform* the
-choice of compression factor rather than to rationalise one already made.
-It answers three questions the plan poses separately:
+This is B2's analysis, and it exists to *inform* the choice of
+compression factor rather than to rationalise one already made. It
+answers three questions:
 
   A. How much of the sub-millisecond clustering is real?
-     Finer capture-gap buckets, down to 1 us. §6.1a puts the capture
-     path's own jitter at plausibly tens of us to low ms, so any bucket
+     Finer capture-gap buckets, down to 1 us. The capture path's own
+     jitter is plausibly tens of us to low ms, so any bucket
      below that is at or under the noise floor of the instrument that
      measured it and cannot be claimed as exchange-level structure.
 
@@ -24,7 +24,7 @@ It answers three questions the plan poses separately:
      Implied mean rate, compressed gap percentiles, and the fraction of
      gaps that collapse.
 
-...and one the plan does not, which turns out to matter more than A:
+...and a fourth, which turns out to matter more than A:
 
   D. Does the compressed trace stress the queue, and does it stay inside
      the range where both arms are valid? A mean rate is not what fills
@@ -48,8 +48,8 @@ is: **every gap shorter than C nanoseconds compresses to zero, not to
 some small positive value.** Those records get identical intended-send
 offsets and the producer fires them back to back at its own ceiling.
 
-§6.5 anticipates "a substantial fraction will clamp to the pacing floor".
-The code does not clamp to a floor; it truncates to zero and the floor
+It is tempting to expect short gaps to clamp to the pacing floor. The
+code does not clamp to a floor; it truncates to zero and the floor
 then asserts itself through the producer's issue rate, with the shortfall
 appearing as producer lag rather than as schedule spacing. Section 3
 reports the zero fraction as its own line for that reason.
@@ -59,8 +59,8 @@ Usage:
 
     mean_rate values are target *mean* offered rates in messages/sec; a
     compression factor is derived for each. Defaults are 10k, 100k, 500k
-    and 1M. Standard library only, deliberately: the tables must print on
-    a bare interpreter, like the rest of the post-processing.
+    and 1M. Standard library only, so the tables print on a bare
+    interpreter.
 """
 
 import bisect
@@ -73,31 +73,32 @@ from pathlib import Path
 
 # Candidate target mean rates, in messages per second, used when none are
 # given on the command line. Chosen to bracket B1's measurable range: the
-# SPSC arm stayed valid with zero drops to 10M/s, the tuned mutex arm
-# failed §6.4's producer-lag gate at 2.5M/s and above.
+# SPSC arm stayed valid to 10M/s, the tuned mutex arm failed the
+# producer-lag gate at 2.5M/s and above.
 DEFAULT_TARGET_RATES = (10_000.0, 100_000.0, 500_000.0, 1_000_000.0)
 
-# The producer's own ceiling, measured by measure_pacing_floor with a
-# null sink: ~50M records/s, about 20 ns per record. A compressed gap
+# The producer's own ceiling, measured by measure_pacing_floor with no
+# queue attached: ~50M records/s, about 20 ns per record. A compressed gap
 # below this cannot be honoured however the schedule is written.
 PRODUCER_FLOOR_NS = 20.0
 
-# Ring capacity used by harness B (§8.0c finding 1).
+# Ring capacity used by harness B (kCapacity in src/harness_b.cpp).
 RING_CAPACITY = 16_384
 
 # Drain rates for the backlog simulation, in messages/sec. Both are
 # grounded in B1 rather than invented: 10M/s is the highest offered rate
-# at which the SPSC arm delivered 2,000,000 of 2,000,000 with zero drops,
-# and 1M/s is the highest rate at which *both* arms passed the lag gate,
-# so it is the ceiling for any comparison B2 wants to make.
+# at which the SPSC arm passed both the drop and the lag gate (at 20M/s
+# it still delivered every record but failed the lag gate), and 1M/s is
+# the highest at which the tuned mutex arm passed too, so it is the
+# ceiling for any comparison B2 wants to make.
 DRAIN_RATES = (1_000_000.0, 10_000_000.0)
 
 # Sliding windows for the peak-rate scan.
 PEAK_WINDOWS_NS = (10_000, 100_000, 1_000_000)
 
-# Capture-gap threshold below which §6.1a says the capture path's own
-# jitter dominates. Used to split the exchange-time cross-check into
-# "close" and "distant" pairs.
+# Capture-gap threshold below which the capture path's own jitter is
+# expected to dominate. Not referenced: the cross-check splits pairs by
+# CROSS_CHECK_BUCKETS instead.
 CLOSE_PAIR_NS = 1_000_000
 
 
@@ -147,9 +148,10 @@ def format_ns(value_ns):
 def load_capture(path: Path):
     """Read the capture log, returning parallel capture-ns and E-ms lists.
 
-    Non-bookTicker payloads (subscription acknowledgements and anything
-    else the socket delivered) are skipped, matching the converter's own
-    notion of what counts as a message.
+    Blank lines, lines without a tab, payloads that are not JSON objects,
+    and objects missing any of s, b, B, a, A are skipped silently. The
+    converter refuses a whole file containing any such line, so for a
+    capture it converts this reads exactly the records it wrote.
     """
 
     capture_ns = []
@@ -192,7 +194,7 @@ def load_capture(path: Path):
 
 
 def clamped_gaps(capture_ns):
-    """Gaps between consecutive capture timestamps, §6.1a rule 4.
+    """Gaps between consecutive capture timestamps.
 
     Written as an explicit comparison and *counted*, never silently
     skipped and never max(0, b - a). Python integers do not wrap, so the
@@ -249,7 +251,7 @@ def report_raw_distribution(gaps_ns):
     print()
 
     # The fine buckets are item A. The point of splitting 1 ms into four
-    # decades is that §6.1a's stated jitter floor sits inside it: if most
+    # decades is that the capture path's expected jitter sits inside it: if most
     # of the sub-millisecond population is also sub-100us, it is at or
     # below the resolution of the Python/asyncio capture path and cannot
     # be claimed as exchange-level microburst structure.
@@ -330,7 +332,7 @@ def report_exchange_cross_check(capture_ns, event_ms):
     structure. Observed fraction far below it means the pairs were
     actually much further apart and something between the exchange and
     the timestamp batched them - which for the finest buckets is the
-    Python/asyncio scheduling jitter §6.1a warns about.
+    Python/asyncio scheduling jitter of the capture path.
 
     The prediction is computed from the bucket's own mean gap rather than
     from its label, so it stays honest when a bucket is unevenly filled.
@@ -513,8 +515,8 @@ def report_compression(gaps_ns, mean_gap_ns, target_rates):
         print(f"    compressed max:       {format_ns(ordered[-1])}")
         print()
 
-        # The zero line first, because it is the one the plan does not
-        # predict and the one that governs what the schedule means.
+        # The zero line first, because it governs what the schedule means:
+        # those records share an intended-send offset.
         print(f"    gaps truncated to 0:  {zeros / count * 100:8.4f}%"
               f"   ({zeros:,})   <- identical intended-send offsets")
 
@@ -673,7 +675,7 @@ def main(argv):
     if len(capture_ns) > 2_000_000:
         # Sections 3 and 4 hold several full-length lists and section 4's
         # Lindley recursion keeps every departure time. That is nothing on
-        # ETHW's 55,775 messages and roughly a gigabyte on BTC's 13.7M.
+        # ETHW's 55,775 messages and several gigabytes on BTC's 13.7M.
         # B2 is an ETHW experiment; this is here so a mistyped path fails
         # with a sentence rather than with the OOM killer.
         print(f"warning: {len(capture_ns):,} messages. Sections 3 and 4 are "
@@ -695,8 +697,6 @@ def main(argv):
     print(f"  total clamped:                 {format_ns(clamped_ns)}")
 
     if backwards_steps == 0:
-        # §6.1a asks for exactly this statement when the count is zero:
-        # it is a cleaner thing to say than "we clamp".
         print()
         print("  Zero backwards steps, so the cumulative clamped form and")
         print("  the endpoint subtraction are provably equivalent for this")
