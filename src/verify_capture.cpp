@@ -1,3 +1,18 @@
+// verify_capture.cpp: opens a capture .bin through CaptureFile, prints its
+// header and mapping, and times warming and two full traversals.
+//
+// Usage: verify_capture <capture.bin> <expected-symbol>
+//
+// The unit tests build their files in memory; this opens one that
+// convert_capture wrote, so the acceptance path runs on a real file. It
+// exits 1 if the open fails, the two traversals disagree, warm() returns
+// 0 or the record span does not match the header's count; otherwise it
+// prints the first and last records and "verify_capture: ok".
+//
+// Related: capture_file.hpp (CaptureFile), convert_capture.cpp (writes the
+// file), tools/validate_capture.py (checks every record against the
+// capture log).
+
 #include "capture_file.hpp"
 
 #include <time.h>
@@ -8,18 +23,6 @@
 #include <iostream>
 #include <string>
 
-
-// Opens a real .bin through CaptureFile and reports what it found.
-//
-// Everything the validator has seen so far it also constructed, which
-// tests the rejection paths but not the acceptance path against a file
-// produced by a different program on a different day. This is that check.
-//
-// It also times warming, which Step 11 needs: §6.4a requires the mapping
-// to be warm before the measurement window opens, and requires lap 1 and
-// lap 2 to be compared to prove the warming worked. Knowing whether that
-// costs seconds or minutes on 734 MiB determines how a B run is
-// sequenced.
 
 namespace {
 
@@ -58,9 +61,9 @@ std::string hex_commit(const std::uint8_t (&commit)[20])
 }
 
 
-// A full traversal of every record, not just one byte per page. This is
-// the access pattern the replay producer will have, so lap 1 against
-// lap 2 is the comparison §6.4a actually asks for.
+// Reads two fields of every record, not one byte per page as warm() does.
+// Records are 56 bytes apart, so every cache line is touched in order, as
+// the replay producer does when it copies each record.
 std::uint64_t traverse(std::span<const CaptureRecord> records) noexcept
 {
     std::uint64_t sink = 0;
@@ -141,9 +144,10 @@ int main(int argc, char* argv[])
         << "page_size_apis_agree: "
         << (file.page_size_agrees() ? "yes" : "no") << '\n';
 
-    // §6.4a: warm the mapping, then prove the warming worked by
-    // comparing two full laps. If they differ materially the warming
-    // failed and no measurement taken after it is trustworthy.
+    // Warm the mapping, then time two full traversals and print their
+    // ratio. Nothing here judges it: a first lap slower than the second
+    // can come from the caches alone, after warming has removed every
+    // page fault.
     const std::uint64_t warm_begin = now_ns();
     const std::uint64_t warm_sink = file.warm();
     const double warm_seconds = seconds_since(warm_begin);
@@ -180,9 +184,9 @@ int main(int argc, char* argv[])
         return 1;
     }
 
-    // Spot-check the first record against the value tools/validate_capture.py
-    // reported for this dataset (§7.5), so acceptance is checked against
-    // an independently derived number rather than only against itself.
+    // Printed for inspection, not checked. The independent check is
+    // tools/validate_capture.py, which compares every record with the
+    // capture log.
     if (!records.empty()) {
         std::cout
             << "\n=== first record ===\n"
