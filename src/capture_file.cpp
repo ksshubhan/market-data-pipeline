@@ -152,9 +152,9 @@ CaptureFileError validate_header(
     }
 
     // The converter writes this placeholder first and patches the real count
-    // last, so seeing it means the conversion never finished. Rejected
-    // explicitly rather than falling out of the size check, so an
-    // interrupted conversion reports as incomplete, not as a size mismatch.
+    // last, so seeing it means the conversion never finished. It needs its
+    // own check: UINT64_MAX is past the overflow guard's limit, so without
+    // this it would be reported as record_count_overflow, not as incomplete.
     if (header.record_count == kUnfinalizedRecordCount) {
         return CaptureFileError::unfinalized_record_count;
     }
