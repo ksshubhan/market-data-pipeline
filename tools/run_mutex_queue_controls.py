@@ -10,9 +10,8 @@ It refuses to start unless:
   - it is run from the repo root with a clean tree,
   - the predictions file is committed (so every prediction predates
     its result),
-  - src/mutex_queue.hpp matches the md5 the mutations were written for,
-  - src/test_mutex_queue.cpp matches the md5 the predictions were
-    written for,
+  - src/mutex_queue.hpp and src/test_mutex_queue.cpp match the md5s
+    pinned below,
   - the unmutated suite builds and passes on every one of N runs
     (positive control, and the evidence that the suite's deadlines
     produce no false FAIL).
@@ -27,10 +26,16 @@ import platform
 import subprocess
 import sys
 
+# The mutations were written against mutex_queue.hpp at 80c10eb (md5
+# 46399c25) and the predictions against test_mutex_queue.cpp at ee5d6a9
+# (6a91a947). Both files have since had comment-only edits, and the pins
+# are the edited files: their code is unchanged, shown by comparing them
+# with comments stripped and by identical object files. Any edit to either
+# file, comments included, changes its md5 and needs its pin updated.
 HEADER = "src/mutex_queue.hpp"
-HEADER_MD5 = "46399c25eb6d99fa3af544fa8777453d"
+HEADER_MD5 = "8f403e291dfa13305e7153034f4e148a"
 TEST = "src/test_mutex_queue.cpp"
-TEST_MD5 = "6a91a9473373c2f0b2deabe747bab908"
+TEST_MD5 = "2fbc30205d6a2e35a898a3e8d233c3bd"
 PREDICTIONS = "evidence/mutex_queue_wake_controls_20260919.txt"
 BINARY = "./build/default/test_mutex_queue"
 BUILD = ["cmake", "--build", "--preset", "default",
