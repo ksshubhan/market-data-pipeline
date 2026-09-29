@@ -1,3 +1,34 @@
+// test_convert_capture.cpp: end-to-end tests for convert_capture, run as
+// a child process.
+//
+// What is worth testing in the converter is its exit status, what it
+// prints and what it leaves on disk, and none of that survives being
+// called as a function. So each case writes a small capture log, execs
+// the converter binary on it (CONVERT_CAPTURE_BINARY, set by CMake), and
+// checks the exit status, the combined stdout and stderr, and the output
+// directory afterwards. Seven cases: a clean conversion publishes; an
+// existing output is not overwritten; a malformed line publishes
+// nothing; an output directory that cannot be opened publishes nothing;
+// leftover temporary files are reported without failing the run;
+// concurrent conversions publish exactly once; and --require-clean in
+// six configurations.
+//
+// Failures and skips are printed to stderr; the exit status is 1 if any
+// check failed.
+//
+// Not a client of test_child_process.hpp. That runs a function in a
+// forked child and classifies the outcome by SIGABRT, which suits an
+// in-process precondition; the converter never aborts, it prints and
+// returns 1, so the runner here execs a binary and reads its exit status.
+//
+// Not covered: failure paths no case provokes, among them syncing the
+// temporary file, publishing it for any reason other than an existing
+// output, syncing the directory, and the fallback from F_FULLFSYNC to
+// fsync. A passing run says nothing about them.
+//
+// Related: convert_capture.cpp (the program under test), CMakeLists.txt
+// (defines CONVERT_CAPTURE_BINARY), test_child_process.hpp.
+
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
@@ -13,36 +44,8 @@
 #include <vector>
 
 
-// End-to-end tests for the converter, driven as a child process.
-//
-// This is the first test in the project that runs a binary rather than
-// linking a translation unit, because the things worth testing here are
-// exit statuses, diagnostics on stderr and what is left on disk
-// afterwards — none of which survive being called as a function.
-//
-// test_child_process.hpp is deliberately not used. It runs a function in
-// a forked child and classifies the outcome by SIGABRT, which is right
-// for an in-process precondition. The converter never aborts: it prints
-// and returns 1. Same idea, different mechanism, so the runner below is
-// a sibling of that header rather than a client of it.
-//
-// WHAT THIS SUITE DOES NOT COVER. The converter has ten guards. Seven are
-// exercised here. The other three — failure of the contents fsync, of the
-// link that publishes, and of the directory fsync — were each verified by
-// hand with an injected invalid descriptor or an injected bad
-// destination, and they cannot be reached from outside the process. There
-// is no filesystem state that makes fsync fail on a descriptor this
-// program just opened successfully, and the .tmp and the .bin share a
-// directory by construction, so no permission state breaks the publish
-// without breaking the .tmp creation first. Automating them would mean
-// shipping fault injection in production code, which trades a real
-// guarantee for a testable one. **A green run of this suite is not
-// evidence about those three.** See §7.6 for their controls.
-//
-// The F_FULLFSYNC downgrade path is also untested, here and everywhere:
-// APFS has never rejected it, so the fallback has never run.
-//
-// No assert() anywhere — every configured build defines NDEBUG.
+// No assert() anywhere: both presets build with NDEBUG, which would
+// compile it out.
 
 namespace {
 
@@ -78,9 +81,9 @@ void check_exit(
 }
 
 
-// A skip has to be as loud as a failure. A suite that silently drops a
-// case under some condition reports "6 passed" either way, and the one
-// number a reader takes from it stops meaning what they think.
+// A skip has to be as loud as a failure. A suite that silently dropped a
+// case under some condition would report the same result either way, and
+// the one line a reader takes from it would stop meaning what they think.
 void skip(const char* test_name, const char* why)
 {
     std::cerr << "SKIP [" << test_name << "] " << why << '\n';
@@ -153,7 +156,9 @@ RunResult run_converter(
 
         ::execv(CONVERT_CAPTURE_BINARY, argv.data());
 
-        // Only reached if execv failed.
+        // Only reached if execv failed. 120 and 121 are not statuses the
+        // converter returns, so a fault in this child cannot pass for a
+        // converter result.
         _exit(121);
     }
 
@@ -191,6 +196,10 @@ const char* kCommit = "0123456789abcdef0123456789abcdef01234567";
 
 // A syntactically valid book ticker line, in the capture format: capture
 // timestamp, a tab, then the exchange's JSON payload.
+//
+// The corrupted last line fails as missing_required_field, because it has
+// no s, b, B, a, A, T or E. Its "u":not_a_number is never rejected itself:
+// the parser skips an unknown key's value without checking it.
 void write_sample_log(
     const std::filesystem::path& path,
     std::size_t record_count,
@@ -445,9 +454,8 @@ void test_unopenable_output_directory()
 }
 
 
-// The orphan scan is the one check in the converter that warns rather
-// than aborting, so the assertion here is as much about the exit status
-// as about the message.
+// The orphan scan warns rather than aborting, so the assertion here is as
+// much about the exit status as about the message.
 void test_orphan_temp_files_warn_without_failing()
 {
     const char* name = "orphan temporary files warn without failing";
@@ -490,14 +498,15 @@ void test_orphan_temp_files_warn_without_failing()
 }
 
 
-// The exclusive publish. A large enough input that every child gets past
-// the startup refuse-to-overwrite check, so the contention lands on the
-// publish rather than on process startup.
+// The exclusive publish: eight converters on one output path at once. The
+// input is 200,000 lines so that each conversion runs long enough for the
+// children usually to be past the startup refuse-to-overwrite check before
+// the first one publishes, which puts the contention on the publish. With
+// a small input the startup check catches some of them first.
 //
-// The assertion is the invariant — exactly one publication — not the
-// split between the two guards that produce it. Which guard catches a
-// given child depends on scheduling, and a test that asserted a split
-// would be a test that fails on a fast morning.
+// So the assertion is the invariant, exactly one publication, not the
+// split between the two guards that produce it: which guard refuses a
+// given child depends on scheduling.
 void test_concurrent_runs_publish_exactly_once()
 {
     const char* name = "concurrent runs publish exactly once";
