@@ -1,3 +1,17 @@
+// test_parser.cpp: tests for parse_scaled_decimal and parse_book_ticker.
+//
+// Each decimal case parses one string and checks both the error and the
+// output: an accepted case must produce the exact scaled value, and a
+// rejected one must leave the output as it was. Each book ticker case
+// parses one message and checks the error; the accepted ones also check
+// all seven fields of the record by value.
+//
+// Failures are counted rather than returned on, so a single run reports
+// every broken case; the exit status is 1 if any check failed.
+//
+// Related: parser.hpp and parser.cpp (the code under test), record.hpp
+// (CaptureRecord), convert_capture.cpp (the parser's caller).
+
 #include "parser.hpp"
 
 #include <cstdint>
@@ -6,17 +20,11 @@
 #include <string_view>
 
 
-// These tests deliberately do not use assert().
-//
-// Every configured build in this project defines NDEBUG: both CMake
-// presets set CMAKE_BUILD_TYPE=RelWithDebInfo, and CMake appends
-// CMAKE_CXX_FLAGS_RELWITHDEBINFO (-O2 -g -DNDEBUG) after CMAKE_CXX_FLAGS.
-// An assert-based suite therefore compiles to nothing and exits 0 whatever
-// the parser does. The checks below are ordinary runtime comparisons and
-// cannot be removed by any build configuration.
-//
-// Failures are counted rather than returned on, so a single run reports
-// every broken case instead of stopping at the first.
+// These tests deliberately do not use assert(). Both CMake presets set
+// CMAKE_BUILD_TYPE=RelWithDebInfo, and CMake appends
+// CMAKE_CXX_FLAGS_RELWITHDEBINFO (-O2 -g -DNDEBUG) after CMAKE_CXX_FLAGS,
+// so an assert-based suite would compile to nothing and exit 0 whatever
+// the parser does. The checks below are ordinary runtime comparisons.
 
 namespace {
 
@@ -160,14 +168,16 @@ const DecimalCase kDecimalCases[] = {
         ParseError::too_many_fractional_digits, kSentinel},
 
     // Rejected: overflow. The first overflows while accumulating the
-    // mantissa; the second has a mantissa that fits but overflows when
-    // scaled by 10^8 (§7.2's integer_digits + 8 > 18 guard).
+    // mantissa. The second, an 11-digit integer, accumulates but exceeds
+    // INT64_MAX once scaled by 10^8. The bound is exact, not a digit
+    // count: the case below has the same number of integer digits.
     {"decimal/mantissa_overflow", "9223372036854775808",
         ParseError::overflow, kSentinel},
     {"decimal/scaling_overflow", "92233720369",
         ParseError::overflow, kSentinel},
 
-    // The largest value the format can represent, accepted exactly.
+    // The largest value the format can represent, accepted exactly, with
+    // an 11-digit integer part.
     {"decimal/int64_max", "92233720368.54775807", ParseError::none,
         kInt64Max},
 };
@@ -202,14 +212,14 @@ struct BookTickerCase {
     const char* name;
     std::string_view json;
 
-    // Supplied by the caller, never inferred from the message (§7.3a).
+    // Supplied by the caller, never inferred from the message.
     std::string_view expected_symbol;
 
     ParseError expected_error;
 
-    // Only meaningful when expected_error is none. §7.4's contract says
-    // the caller must not read the record after a failure, so rejected
-    // cases check the status and nothing else.
+    // Only meaningful when expected_error is none. After a failure the
+    // caller must not read the record, so rejected cases check the status
+    // and nothing else.
     bool check_fields;
 };
 
@@ -238,10 +248,10 @@ const BookTickerCase kBookTickerCases[] = {
         true
     },
     {
-        // The one that proves "top-level key scanner, not byte-pattern
-        // matcher": an unknown string value contains both a closing brace
-        // and text that looks like another top-level "b" key. Neither may
-        // confuse the scanner, and the real top-level "b" must win.
+        // An unknown string value holding a closing brace and an escaped
+        // copy of a "b" key and value. Skipping that string has to honour
+        // the escapes and ignore the brace, or the rest of the message is
+        // misread; the real top-level "b" must win.
         "book_ticker/decoy_brace_and_fake_key",
         R"({"e":"bookTicker","s":"BTCUSDT","future_field":"brace } and fake key \"b\":\"999.99\"","b":"72009.00","B":"3.065","a":"72009.10","A":"2.180","T":1787231293915,"E":1787231293915})",
         "BTCUSDT",
@@ -289,7 +299,7 @@ const BookTickerCase kBookTickerCases[] = {
     },
     {
         // Nine fractional digits against a fixed scale of 10^8. Hard
-        // failure, never silent truncation (§7.2).
+        // failure, never silent truncation.
         "book_ticker/nine_fractional_digits",
         R"({"e":"bookTicker","s":"BTCUSDT","b":"72009.123456789","B":"3.065","a":"72009.10","A":"2.180","T":1787231293915,"E":1787231293915})",
         "BTCUSDT",
@@ -337,9 +347,9 @@ void run_book_ticker_cases()
             kExchangeMs
         );
 
-        // Case sensitivity: "b"/"B" and "a"/"A" are price and quantity.
-        // A tolower() anywhere in the key path would swap them, and on
-        // ETHW the swap produces plausible values in both fields.
+        // Checked by value because "b"/"B" and "a"/"A" differ only in
+        // case: a branch that stored a price in its quantity's field, or
+        // the reverse, would still return none.
         check_int64(
             test.name, "bid_price", record.bid_price, kExpectedBidPrice);
         check_int64(
