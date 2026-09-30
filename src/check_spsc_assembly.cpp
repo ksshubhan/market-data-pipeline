@@ -3,12 +3,12 @@
 // uncached index arms, in standalone functions so each appears in the
 // binary under its own symbol.
 //
-// tools/make_spsc_evidence.py disassembles the built binary and checks
-// that the four functions contain eight ordered (acquire or release)
-// instructions in total, that no read-modify-write instruction (CAS,
-// exclusive load/store, swap, atomic add) appears anywhere in it, and
-// where each function's acquire load sits relative to its first branch.
-// It writes evidence/spsc_arm64_disassembly_20260908.txt. Rename a
+// tools/make_spsc_evidence.py reads an llvm-objdump listing of this
+// binary, written by the README's command, and checks that the four
+// functions hold eight acquire or release instructions in total,
+// that no line matches its read-modify-write pattern, and where each
+// function's acquire load sits relative to its first branch. It
+// writes evidence/spsc_arm64_disassembly_20260908.txt. Rename a
 // function only together with that script. Running the program is a
 // sanity check: one record through each arm, exit 0 if it arrives
 // intact. See ARCHITECTURE.md.
