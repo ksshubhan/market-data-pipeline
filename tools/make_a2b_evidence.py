@@ -1,10 +1,22 @@
 #!/usr/bin/env python3
-"""Generate the A2b/A3b disassembly evidence file from a live objdump dump.
+"""Write evidence/a2b_a3b_arm64_disassembly_20260908.txt from an
+llvm-objdump listing of build/default/check_a2b_assembly.
 
-Verifies what it contains and writes only if every assertion holds.
-Repo state is computed from git, not asserted.
+Reads the listing from /tmp/a2b_full.txt, which the caller writes with
+the command the README gives; this script runs no disassembler. It
+writes nothing unless the tree is clean and every check holds: each
+A2b store loop has exactly one stlr, the stores in both A3b write
+functions cover the 80-byte slot without gap or overlap, and each A3b
+pair has identical encodings.
 
-Run from the repo root of a clean clone built at the current HEAD.
+Only the Repo line of the header is computed, from git. The title date,
+the output filename and the Host, Compiler, Disassembler, SDK and Flags
+lines are fixed text from the 8 Sep run, so a re-run on another
+toolchain writes them unchanged. Nothing checks that the listing came
+from a build of the current HEAD.
+
+Run from the repository root. Related: src/check_a2b_assembly.cpp and
+tools/make_spsc_evidence.py.
 """
 
 import re
@@ -14,6 +26,8 @@ import sys
 DUMP = "/tmp/a2b_full.txt"
 OUT = "evidence/a2b_a3b_arm64_disassembly_20260908.txt"
 
+# Written into the header as given: they describe the 8 Sep run, not the
+# machine running this script.
 HOST = "Apple M2, macOS 26.6.2, build 25G83"
 COMPILER = "Homebrew clang 22.1.8, target arm64-apple-darwin25.6.0"
 DISASM = "Homebrew LLVM llvm-objdump 22.1.8"
@@ -26,6 +40,9 @@ STORE_LOOPS = ["store_loop_16", "store_loop_64",
                "store_loop_128", "store_loop_256"]
 SLOTS = ["slot_write_80", "slot_write_128", "slot_read_80", "slot_read_128"]
 
+# llvm-objdump -d output: a 16-digit address and <symbol>: per function,
+# then address, the 8-hex-digit encoding, a tab, mnemonic and operands.
+# The A3b comparison compares the encodings.
 HEADER_RE = re.compile(r"^[0-9a-f]{16} <(.+)>:$")
 INSN_RE = re.compile(r"^([0-9a-f]+): ([0-9a-f]{8})\s+\t(\S+)\s*(.*)$")
 
@@ -66,6 +83,8 @@ for line in dump_lines:
         current["lines"].append(line)
 
 by_name = {}
+# Symbols are mangled, so each is found by substring, and exactly one
+# match is required.
 for want in STORE_LOOPS + SLOTS:
     hits = [b for b in blocks if want in b["symbol"]]
     if len(hits) != 1:
@@ -84,6 +103,8 @@ def insns(block):
     return out
 
 
+# Counts stlr in the whole function. That the one stlr sits inside the
+# loop is visible in the listing, not checked here.
 for name in STORE_LOOPS:
     n = sum(1 for i in insns(by_name[name]) if i["mnem"] == "stlr")
     if n != 1:
@@ -101,6 +122,9 @@ def reg_width(operand):
     return None
 
 
+# The slot is the first argument, so it arrives in x0. Only stores
+# addressed from x0 with an immediate offset are counted, so coverage
+# passes only if those alone write each of the 80 bytes exactly once.
 OFF_RE = re.compile(r"\[x0(?:, #(0x[0-9a-f]+|\d+))?\]")
 
 
@@ -134,6 +158,8 @@ for name in ("slot_write_80", "slot_write_128"):
     if cursor != 80:
         fail("%s: stores cover %d bytes, expected 80." % (name, cursor))
 
+# Compared by encoding: identical encodings are the same instructions,
+# every branch offset included.
 pairs = [("slot_write_80", "slot_write_128"), ("slot_read_80", "slot_read_128")]
 for a, b in pairs:
     ea = [i["enc"] for i in insns(by_name[a])]
