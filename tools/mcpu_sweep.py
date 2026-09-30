@@ -1,23 +1,33 @@
 #!/usr/bin/env python3
-"""Re-run the -mcpu sweep of tools/interference_probe.cpp and commit its output.
+"""Re-run the -mcpu sweep of tools/interference_probe.cpp and write its
+output to evidence/mcpu_sweep_gcc_aarch64_YYYYMMDD.txt, dated by the
+run.
 
-The sweep was first run on 7 Sep 2026 under GCC 15.2.0 in an aarch64
-Ubuntu guest, and its results were recorded only as prose. This script
-re-runs it and writes the raw output to evidence/, so the claim has a
-committed artifact.
+For each setting in EXPECTED, including no -mcpu at all, it compiles the
+probe with g++, runs it, and records the command, both exit statuses,
+the compiler's stderr and the probe's stdout and stderr, line for line
+and indented. It then compares each destructive value with EXPECTED. A
+mismatch is reported in the file and the script exits 2.
 
-For each setting it compiles the probe with g++, runs it, and records
-the compiler's stderr and the probe's stdout verbatim. It then compares
-each destructive value with the table recorded on 7 Sep. A mismatch is
-a finding, not an error: it is reported in the file and the script
-exits 2 rather than refusing to write.
+It also records the -mcpu= and -mtune= lines, exit status and stderr of
+"g++ -mcpu=apple-m1 -Q --help=target". The echoed -mcpu= line is not
+evidence that GCC knows the name: GCC 13.3 echoes an unknown value too,
+exiting 1 with an error on stderr. The exit status and stderr are the
+evidence, and the script records them without checking them.
 
-It also records what "g++ -mcpu=apple-m1 -Q --help=target" reports for
--mcpu and -mtune, which is the evidence for the name being recognised.
+Refuses, exit 1, outside a git repository, on a tree with any change or
+untracked file, on a machine other than aarch64, when g++ --version
+exits non-zero, or when g++ is clang. Run it from the repository root:
+nothing checks that, and the probe and output paths are relative to the
+working directory. Past the refusals it always writes the file. It then
+exits 1 if a build or run failed, a destructive line was missing, or an
+agreement line was missing or not "yes"; otherwise 2 on any mismatch;
+otherwise 0. The probe's "macro agrees with <new>" line cannot say NO
+with libstdc++ 13 or 15 or libc++ 18, which all define <new>'s constant
+as __GCC_DESTRUCTIVE_SIZE.
 
-Refuses unless: run from the repo root of a clean tree, on aarch64,
-with a g++ that is GCC rather than clang. Exits 1 if any build or run
-fails, or if the macro and <new> disagree in any build.
+Related: tools/interference_probe.cpp, and its committed output,
+evidence/mcpu_sweep_gcc_aarch64_20260919.txt.
 """
 
 import datetime
@@ -77,6 +87,8 @@ def os_name():
 
 
 def main():
+    # Checks only that this is a git repository: top is never compared
+    # with the working directory.
     code, top, _ = run(["git", "rev-parse", "--show-toplevel"])
     if code != 0:
         refuse("not inside a git repository")
@@ -85,10 +97,13 @@ def main():
         refuse("working tree is not clean")
     if platform.machine() != "aarch64":
         refuse("machine is " + platform.machine() + ", need aarch64")
+    # A g++ missing from PATH raises FileNotFoundError in subprocess.run
+    # and never reaches this refusal; it catches one that exits non-zero.
     code, version, _ = run(["g++", "--version"])
     if code != 0:
         refuse("g++ not found")
     first = version.splitlines()[0] if version else ""
+    # EXPECTED is GCC's table, and on macOS g++ runs Apple clang.
     if "clang" in version.lower():
         refuse("g++ is clang: " + first)
 
@@ -120,6 +135,7 @@ def main():
 
     for mcpu, expected in EXPECTED:
         label = "(none)" if mcpu is None else mcpu
+        # Built outside the repository, so the build leaves the tree clean.
         binary = "/tmp/ip_sweep_" + ("default" if mcpu is None else mcpu)
         cmd = ["g++", "-std=c++20", "-Wall", "-Wextra"]
         if mcpu is not None:
@@ -149,6 +165,9 @@ def main():
 
         destructive = field(pout, "hardware_destructive_interference_size")
         agrees = field(pout, "macro agrees with <new>")
+        # libstdc++ 13 and 15 and libc++ 18 define <new>'s constant as the
+        # macro, so with them a run prints "yes" here. This catches a failed
+        # run or a missing line, not a disagreement.
         if code != 0 or destructive is None or agrees != "yes":
             emit("Result:   RUN FAILED or macro disagrees with <new>")
             emit()
@@ -162,6 +181,9 @@ def main():
         summary.append((label, destructive, expected, match))
         emit()
 
+    # The exit status and stderr show whether GCC knows the name; the
+    # echoed -mcpu= line does not, since an unknown value is echoed too.
+    # Both are recorded here and checked nowhere.
     emit("=== -Q --help=target with -mcpu=apple-m1")
     cmd = ["g++", "-mcpu=apple-m1", "-Q", "--help=target"]
     emit("Command:  " + " ".join(cmd))
@@ -189,6 +211,8 @@ def main():
     emit("Build or run failures: " + str(failures))
     emit("Differences from 7 Sep: " + str(mismatches))
 
+    # Written whatever the builds and runs did, so a failed sweep is on
+    # record too.
     text = "\n".join(out_lines) + "\n"
     with open(out_path, "w") as f:
         f.write(text)
@@ -197,6 +221,7 @@ def main():
     print("lines " + str(len(out_lines)))
     print("md5   " + hashlib.md5(text.encode("utf-8")).hexdigest())
 
+    # A failure takes precedence: exit 1 even when values also differ.
     if failures:
         sys.exit(1)
     if mismatches:
