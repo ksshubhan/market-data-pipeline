@@ -575,8 +575,8 @@ capacity.
 Smallest, not largest, and the reason is not memory. A larger ring means
 the producer stores into slots that have fallen out of cache and the
 consumer reads cold ones. That cost is additive and near-identical in
-absolute nanoseconds for both arms — so it is a large fraction of a
-dozen-instruction push and a small fraction of one that takes a lock.
+absolute nanoseconds for both arms — so it is a large fraction of the
+spsc push and a small fraction of one that takes a lock.
 Oversizing quietly narrows the gap that is the result. A4b saw exactly
 this: the cached-index advantage fell from 1.400 at 5 MB to 1.359 at
 80 MB.
