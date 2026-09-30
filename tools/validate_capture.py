@@ -1,4 +1,23 @@
 #!/usr/bin/env python3
+# Checks a .bin written by convert_capture against the capture log it came
+# from, without the C++ parser. After the header's fixed fields and the
+# file size, every log line is converted on its own terms, with json and
+# decimal.Decimal, and compared field by field with the record at the same
+# position; the record count and the absence of trailing bytes close the
+# check. It then reports observations about the feed over every record.
+#
+# usage: python3 tools/validate_capture.py CAPTURE.log DATASET.bin
+#
+# Every log line must be a bookTicker message for the header's symbol, as
+# the converter requires. Exits 0 when every record matches, no price is
+# zero or negative and no quantity negative; otherwise 1, with the reason
+# on stderr: the first mismatching record's line number and fields, or the
+# check that failed. The header's symbol is decoded up to its first NUL;
+# its termination and git_commit are not checked.
+#
+# Related: src/convert_capture.cpp writes the .bin; src/capture_file.hpp
+# and src/record.hpp define its layout; src/parser.cpp is the conversion
+# this one is independent of.
 
 import argparse
 import json
@@ -8,6 +27,8 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 
+# Little-endian with no padding, matching BinaryHeader and CaptureRecord:
+# calcsize gives 64 and 56.
 HEADER_FORMAT = "<8sQHHHBBBB16s20s2s"
 HEADER_SIZE = struct.calcsize(HEADER_FORMAT)
 
@@ -24,6 +45,8 @@ STREAM_BOOK_TICKER = 1
 
 
 def scaled_decimal(text: str) -> int:
+    # Decimal is exact, so a ninth fractional digit is refused below rather
+    # than rounded away as a float would.
     try:
         value = Decimal(text)
     except InvalidOperation as exc:
@@ -132,34 +155,37 @@ def validate_header(header_bytes: bytes):
 
 
 class FeedObservations:
-    """Properties of the feed itself, accumulated over every record.
+    """Properties of the feed, accumulated over every record once it has
+    matched its log line.
 
-    Separate from the round-trip check above, which asks whether the
+    Separate from the round-trip check in main(), which asks whether the
     converter reproduced the log faithfully. These ask what the log
-    actually contains — facts about Binance's data that §7.5 says to
-    record rather than assume.
+    contains: facts about Binance's data to record rather than assume, so
+    a sample maximum is reported and never treated as a bound.
 
-    Nothing here is inferred from a sample maximum being a bound. The
-    counts are reported; only the two invariants that a violation would
-    make a parser bug are treated as failures.
+    Two counts fail the run. By the time a record is observed, both
+    conversions agree on it. A negative value then means a conversion
+    accepted a sign, which the C++ parser's grammar forbids. A
+    non-positive price means that, or a zero price in the log itself,
+    which both conversions accept.
     """
 
     def __init__(self) -> None:
         self.records = 0
 
-        # T vs E. Both are uint64 on the wire, so `E - T` UNDERFLOWS
-        # rather than going negative — the same unsigned trap §6.1a
-        # documents for the replay clamp. Compare the operands; never
-        # test the sign of a difference.
+        # T vs E. Python integers do not wrap, so E - T could simply go
+        # negative here. The operands are compared first anyway, the form
+        # the C++ side needs, where both fields are uint64 and a difference
+        # would wrap.
         self.t_before_e = 0
         self.t_equals_e = 0
         self.t_after_e = 0
         self.max_e_minus_t_ms = 0
         self.max_t_minus_e_ms = 0
 
-        # Range sanity. §7.5: validate actual invariants, not guesses —
-        # do not assert strictly-positive quantities unless Binance
-        # guarantees it. So zero quantities are counted, not rejected.
+        # Range sanity: validate actual invariants, not guesses. Nothing
+        # guarantees a strictly positive quantity, so zero quantities are
+        # counted, not rejected.
         self.min_bid_price = None
         self.min_ask_price = None
         self.min_bid_qty = None
@@ -169,13 +195,14 @@ class FeedObservations:
         self.zero_bid_qty = 0
         self.zero_ask_qty = 0
 
-        # A crossed book (bid >= ask) is not impossible on a real feed,
-        # but on top-of-book it is worth knowing about before it turns
-        # up as an inexplicable result. Counted, not asserted.
+        # A crossed (bid > ask) or locked (bid == ask) book is not
+        # impossible on a real feed, but on top of book it is worth knowing
+        # about before it turns up as an inexplicable result. Counted, not
+        # asserted.
         self.crossed = 0
         self.locked = 0
 
-        # These two would mean a parser bug rather than a feed quirk.
+        # The two counts that fail the run; the class docstring says why.
         self.non_positive_price = 0
         self.negative_qty = 0
 
@@ -442,13 +469,13 @@ def main() -> int:
         )
 
         # SCALE_EXPONENT rather than a header field: validate_header has
-        # already asserted the file's exponent equals it, so the constant
-        # is a checked fact here rather than an assumption. The header
-        # dict deliberately returns only what callers need.
+        # already required the file's exponent to equal it, so the constant
+        # is a checked fact here rather than an assumption. The header dict
+        # carries only the fields main() uses.
         observations.report(SCALE_EXPONENT)
 
-        # Only these two would indicate a parser bug rather than a
-        # property of the feed, so only these two fail the run.
+        # Only these two fail the run: a sign accepted by a conversion, or
+        # a zero price in the log (see FeedObservations).
         if observations.non_positive_price:
             print(
                 f"\nvalidation failed: "
