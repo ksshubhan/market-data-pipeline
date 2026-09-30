@@ -33,9 +33,9 @@
 //    Depth looks free, since tail - head is in registers inside try_pop.
 //    From outside the queue, though, reading the producer's index is a
 //    cross-core load the consumer would otherwise not make, once per
-//    message. It is least free on the arm whose pop is a dozen
-//    instructions, so it would tax the two arms unequally, the same
-//    reason replay_producer.hpp refuses virtual dispatch.
+//    message. That load is a far larger share of the spsc pop than of
+//    one that takes a lock, so it would tax the two arms unequally, the
+//    same reason replay_producer.hpp refuses virtual dispatch.
 //
 //    It is also unnecessary. Depth at any instant is (messages sent by t)
 //    minus (messages dequeued by t), and both series are recoverable: the
@@ -111,7 +111,7 @@ constexpr std::size_t kSliceLength = 2'000'000;
 // reason is not memory. A larger ring means the producer stores into
 // slots that have fallen out of cache and the consumer reads cold ones;
 // that cost is additive and near-identical in absolute ns for both arms,
-// so it is a large fraction of a dozen-instruction push and a small
+// so it is a large fraction of the spsc push and a small
 // fraction of one that takes a lock. Oversizing quietly narrows the gap
 // that is the result. A4b saw exactly this, the cached-index advantage
 // falling from 1.400 at 5 MB to 1.359 at 80 MB.
@@ -124,11 +124,13 @@ constexpr std::size_t kSliceLength = 2'000'000;
 // The criterion was met: zero dropped records at every rate on every arm.
 constexpr std::size_t kCapacity = 16384;
 
-// Half-decade log spacing. All are far below measure_pacing_floor's ~50M
-// records/s producer ceiling, so the producer is never the limiting
-// factor anywhere in the sweep. Log spacing because the expected shape is
-// flat then hockey-stick, and equal resolution per decade is what finds
-// the knee.
+// Log spacing, three points a decade (1, 2.5, 5) from 100k/s, ending at
+// 20M/s, because the expected shape is flat then hockey-stick and equal
+// resolution per decade is what finds the knee. The top rate is at the
+// producer's edge: a 50 ns period against measure_pacing_floor's ~20 ns
+// a record with no queue attached. With the spsc queue attached that
+// margin does not hold the p99 lag gate. The gate, not this list,
+// decides where each arm's valid range ends.
 constexpr double kRates[] = {
     100'000.0,
     250'000.0,
@@ -803,11 +805,11 @@ int main(int argc, char* argv[])
     const std::span<const CaptureRecord> slice = all.subspan(0, kSliceLength);
 
     // Warm the mapping, then time two traversals of the slice and record
-    // their ratio, so the output shows whether any paging was left. For
-    // the full 13.7M-record file the ratio's floor is about 1.2, from cache
-    // warming on the first pass; for this 2M-record slice both laps stream
-    // from DRAM and about 1.0 is expected. The note written into the output
-    // says the same.
+    // their ratio. The ratio is two laps of a few milliseconds each and
+    // has no floor to test against; what shows the warming worked is
+    // warm() taking over a second on a cold file against milliseconds a
+    // lap. The note printed with it below expects about 1.0 and overstates
+    // what the ratio shows.
     const std::uint64_t warm_begin = now_ns();
     volatile std::uint64_t warm_sink = capture.warm();
     const std::uint64_t warm_end = now_ns();
