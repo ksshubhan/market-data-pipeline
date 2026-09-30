@@ -82,3 +82,15 @@ index-caching work changed spsc_ring_buffer.hpp, and neither has been
 re-run. Per §6.6, a clean run with no verified control says only that the
 tool was quiet; this file carries its control, those two do not carry a
 current one.
+
+--- Correction appended 30 Sep 2026, on top of 435ac62. Lines 47-52
+--- above are left unedited.
+
+Lines 47-52 say the C1 control in this run is the uncached arm, read off
+the last template parameter, (SpscIndexCaching)0. SpscIndexCaching
+declares Cached first, so 0 is the cached arm, and
+evidence/spsc_arm64_disassembly_20260908.txt names the uncached
+functions with (SpscIndexCaching)1. The control ran the cached arm. The
+uncached arm is covered in this run by spsc_ring_buffer, whose test
+instantiates SpscIndexCaching::Uncached and passed above with the other
+six suites. No figure in this file changes.
