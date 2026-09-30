@@ -51,9 +51,10 @@ market moved, because bursts and volatility arrive together.
 only. Median of three passes per baseline configuration; the spsc arm is
 configured identically in both files, so its points are the median of six. The three lines converge because all three
 sit on the same ~12 µs scheduler floor — see [the scheduler
-floor](#the-scheduler-floor-why-p999-is-not-the-headline-here). The
-baselines stop where they fail the producer-lag gate: the parking
-configuration above 250k/s, the tuned one above 1M/s.*
+floor](#the-scheduler-floor-why-p999-is-not-the-headline-here). Each
+line stops where its arm fails the producer-lag gate: the parking
+configuration above 250k/s, the tuned one above 1M/s, the spsc arm above
+10M/s.*
 
 ![latency distribution](results/b1_percentile_distribution.png)
 
@@ -425,8 +426,13 @@ not offered.
 
 Invalid datapoints are written to the CSV with the failing gate named,
 not deleted. **The mutex arm fails the lag gate at every rate at or above
-2.5M/s**, and the parking configuration fails at 500k/s and above. That
-is reported as a limit on the measurable range.
+2.5M/s**, and the parking configuration fails at 500k/s and above.
+**The spsc arm fails it at 20M/s, in all six passes**, with p99 lag of 67
+to 3,758 ns against a 50 ns period; every spsc row from 100k to 10M/s
+passes. With no queue attached the producer's own p99 lag at 20M/s is
+41 ns (`results/pacing_floor_20260928.txt`), so the top rate sits at the
+pacing loop's limit; what pushes the queued rows past it is not measured.
+All three are reported as limits on the measurable range.
 
 ### Why three harnesses, not one
 
