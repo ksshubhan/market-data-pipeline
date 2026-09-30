@@ -265,9 +265,9 @@ instruction in, before any branch, paid on every call. That is a causal
 account of the 1.36× rather than an inference from it, and the indices
 are computed by the script that writes
 `evidence/spsc_arm64_disassembly_20260908.txt` rather than read off by
-eye. It also settles a related point — the uncached path is the
-*shorter* one, skipping the cache refresh and the recheck, so it loses on
-what it pays for rather than on how much work it does.
+eye. It does not settle which arm does less work: the uncached
+push is shorter, 23 instructions against 28, only because it has
+no refresh block, and A4b's cached producer never runs that block.
 
 **Three of the M2's cache numbers disagree**, and this project can say
 which one governs: `hw.cachelinesize` reports 128 (fetch granularity),
