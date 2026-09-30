@@ -72,3 +72,17 @@ reproduces them, and the open work that paragraph names is closed.
 study.md, one of the three places that paragraph cites, is removed from
 the repository in the commit that appends this note. Its text remains in
 the history at 87435b9.
+
+--- Correction appended 30 Sep 2026, on top of 0808b15. Lines 41 and 43
+--- above are left unedited.
+
+Line 41 says the -mcpu builds report 64/64 "confirmed through <new> and
+not only the macro". The probe's agreement line cannot disagree:
+libstdc++ 13 and 15 and libc++ 18 all define <new>'s constant as
+__GCC_DESTRUCTIVE_SIZE, so <new> reports whatever the macro holds. What
+the readings do show is the value a real build at each -mcpu sees.
+
+Line 43 says GCC gives 64 for every aarch64 implementation it actually
+models. The sweep built five: neoverse-n1, neoverse-v1, neoverse-v2,
+cortex-a76 and cortex-x3. The rest of GCC 15's -mcpu list was not built,
+so the claim holds for those five and is made for no other.
