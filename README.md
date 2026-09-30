@@ -284,7 +284,7 @@ leaves the cache-line field unset.
 
 So the sharper statement is not that the libraries are conservative by
 4×. It is that **a direct measurement and a compiler independently arrive
-at 64** — A2b on this machine, and GCC for every aarch64 part it models —
+at 64** — A2b on this machine, and GCC for the five cores above —
 while 256 is what you get for not telling the toolchain what it is
 building for. Details and the source trace are in the limitations
 section; the constant is always quoted with its library version because
@@ -1167,10 +1167,10 @@ actually being routed to the table with the field unset.
 
 The result is therefore not that the libraries are wrong by 4x. It is that
 **one direct measurement and one compiler independently say 64** — A2b on
-this M2, and GCC for every aarch64 part it models — while 256 is the price
-of not telling the toolchain what it is building for. libc++ has no tuning
-notion at all and reports 256 flat, so it cannot participate in the
-distinction. Measured in an Ubuntu 25.10 aarch64 guest under UTM;
+this M2, and GCC for the five cores the sweep built — while 256 is the
+price of not telling the toolchain what it is building for. libc++ has no
+tuning notion at all and reports 256 flat, so it cannot participate in
+the distinction. Measured in an Ubuntu 25.10 aarch64 guest under UTM;
 `evidence/interference_libstdcxx_gcc15_aarch64.txt`, probe at
 `tools/interference_probe.cpp`. The eight-arm `-mcpu` sweep above is
 `evidence/mcpu_sweep_gcc_aarch64_20260919.txt`, produced by
