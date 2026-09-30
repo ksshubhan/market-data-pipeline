@@ -54,3 +54,21 @@ Found by comparing this file against section 5 during the rev 17 audit.
 Recorded as instance twenty-two in section 13: an artifact carrying a claim
 about an external source that a later revision falsified without reopening
 the artifact.
+
+--- Correction appended 30 Sep 2026, on top of 87435b9. The paragraph
+--- above beginning "Note on evidence" is left unedited. It was true on
+--- 7 Sep and is no longer.
+
+The -mcpu sweep now has a committed artifact:
+evidence/mcpu_sweep_gcc_aarch64_20260919.txt, added at 07805c7 on 19 Sep.
+It is a re-run, not the 7 Sep run, whose output was recorded only as
+prose. Under GCC 15.2.0 on an Ubuntu 25.10 aarch64 guest it builds this
+probe eight ways: no -mcpu, generic, apple-m1, neoverse-n1, neoverse-v1,
+neoverse-v2, cortex-a76 and cortex-x3. Every destructive value matches
+the one recorded on 7 Sep, 256 for the first three and 64 for the other
+five. The figures above are now backed by a committed run that
+reproduces them, and the open work that paragraph names is closed.
+
+study.md, one of the three places that paragraph cites, is removed from
+the repository in the commit that appends this note. Its text remains in
+the history at 87435b9.
