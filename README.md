@@ -1147,7 +1147,7 @@ than a judgement.** libstdc++ 15.2.0 on aarch64 reports 256 destructive
 and 64 constructive in a default build — matching both libc++ builds. But
 the number moves with `-mcpu`: `generic` and `apple-m1` give 256, while
 `neoverse-n1`, `neoverse-v1`, `neoverse-v2`, `cortex-a76` and `cortex-x3`
-all give **64**, confirmed through `<new>` and not only the macro.
+all give **64**.
 
 GCC 15's source explains it. `aarch64-cores.def` recognises `apple-m1` —
 real MIDR values, `V8_5A` — but wires all Apple parts to the
