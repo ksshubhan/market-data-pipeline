@@ -752,10 +752,10 @@ Reproducing it mostly shows an outcome the prediction did not name. In
 the slot's previous record whole, every field from `N − capacity`; 21
 showed the second form and 10 the first
 (`evidence/c1_native_runs_20260919.txt`, classified by
-`tools/classify_c1_runs.awk`). A whole stale record is consistent with
-the index store becoming visible before any of the slot's payload
-stores, which is the simplest form of this failure and the one the
-prediction missed.
+`tools/classify_c1_runs.awk`). The producer still publishes with a
+release store, so its index cannot become visible before the payload.
+A whole stale record is the consumer's slot loads satisfied before its
+relaxed index load, the outcome the prediction missed.
 
 **Sequence oracle.** A dropping queue makes gaps legal, so "I saw a gap"
 proves nothing. Three checks: strict monotonicity (no legal drop policy
