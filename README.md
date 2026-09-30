@@ -413,13 +413,15 @@ harness B code existed**:
    the rate delivered.
 
 Maximum producer lag is **reported but is deliberately not a gate**. An
-earlier draft gated on max lag at ten periods; producer characterisation
-showed that gate failing by a factor of 460 at 20M/s, because OS
-scheduling events have an absolute duration whatever the rate, so a gate
-expressed in periods is unsatisfiable at high rates by construction. The
-concept was wrong, not the constant — a single 50 µs stall in a 200,000
-message run produces one large latency sample, which is data about the
-tail rather than evidence the rate was not offered.
+earlier draft gated on max lag at ten periods. The producer run alone,
+with no queue attached (`results/pacing_floor_20260928.txt`), fails that
+gate at six of its ten rates up to 20M/s: by 12.5× at 20M/s, and by 3.3×
+at 10k/s, where one message was 3.35 ms late. OS scheduling events have
+an absolute duration whatever the rate, so a gate expressed in periods
+fails wherever one lands. The concept was wrong, not the constant — a
+single 50 µs stall in a 200,000 message run produces one large latency
+sample, which is data about the tail rather than evidence the rate was
+not offered.
 
 Invalid datapoints are written to the CSV with the failing gate named,
 not deleted. **The mutex arm fails the lag gate at every rate at or above
@@ -986,6 +988,12 @@ python3 tools/analyse_tail_samples.py results/tail_samples_*.csv
 ./build/default/measure_condvar_wakeup $(git rev-parse HEAD) 0 \
     > /tmp/condvar.txt
 
+# The producer's pacing ceiling, with no queue attached. macOS only: it
+# exits 1 unless the QoS class is applied. Writes to stdout; the
+# committed artifact is results/pacing_floor_20260928.txt.
+./build/default/measure_pacing_floor $(git rev-parse HEAD) 0 \
+    > /tmp/pacing_floor.txt
+
 # Timer calibration behind the ~19.9 ns sampling window and the two
 # outlier populations. Takes no arguments and writes
 # results/timer_calibration.csv, overwriting the committed one.
@@ -1190,11 +1198,12 @@ gap shorter than the compression factor becomes exactly zero and the
 affected records share an intended-send offset — 20.9% of gaps at the
 chosen factor, essentially all of them below the capture clock's own
 resolution. The producer then issues those records back to back at its own
-~20 ns ceiling and the shortfall appears as producer lag rather than as
-schedule spacing. Gaps in the 100 µs – 1 ms band are ~77% capture artifact
-and do survive compression as 2.6–25.8 ns of spacing, most but not all of
-which is below that ceiling. Stated as contamination rather than waved
-off.
+~20 ns ceiling, measured with no queue attached in
+`results/pacing_floor_20260928.txt`, and the shortfall appears as producer
+lag rather than as schedule spacing. Gaps in the 100 µs – 1 ms band are
+~77% capture artifact and do survive compression as 2.6–25.8 ns of
+spacing, most but not all of which is below that ceiling. Stated as
+contamination rather than waved off.
 
 B3 is measured, by direct comparison rather than as an end-to-end arm —
 see above for why.
