@@ -455,7 +455,8 @@ Read the clock twice back-to-back, ~1M times. Every result is either 0
 (both reads inside one tick) or ~41.67 (a tick boundary fell between
 them). The nonzero fraction times the tick period gives the loop duration
 — measuring below the clock's own resolution using the statistics of when
-it steps.
+it steps. In the committed run 477,956 of 1,000,000 samples crossed one
+boundary, a loop of ~19.9 ns.
 
 The outlier threshold is **70 ns, not a round number**: the
 single-boundary model forbids two ticks within one iteration, so anything
@@ -480,12 +481,6 @@ multi-tick is 70 ns inclusive to 1 µs exclusive, the microsecond
 population is 1 µs and above, and the two therefore do not overlap. An
 open-ended threshold at 70 ns counts 755 by sweeping the microsecond
 samples into the multi-tick bucket.
-
-The full derivation — the vernier estimator and the 19.5–22 ns spread
-across eight runs — is in [`NOTES.md`](NOTES.md), the measurement
-notebook. It covers calibration, record layout, the
-A-series and C1, and stops at the dataset regeneration on 4 September; the
-queue tuning and B1 are in this file rather than there.
 
 ### Clock domains
 
@@ -548,13 +543,13 @@ window*. The mapping is warmed before the clock starts, with an observable
 side effect — a touch loop whose result is discarded is dead code at `-O2`
 and clang deletes it.
 
-Warming is then **verified** by comparing two full traversals. Note that
-the full 13.7M-record file has a lap-1/lap-2 floor of ~1.2 — 1.196 and
-1.222 across two runs, recorded in `NOTES.md` — where the residual is
-cache warming rather than paging.
-For the 2M-record slice used in B1 (~112 MB, far beyond the 16 MB L2) both
-laps stream from DRAM and the ratio sits near 1.0. A ratio at 1.0 there is
-correct, not a failed check.
+Warming is then **verified** by timing two traversals after it. In
+`results/verify_capture_20260930_182746.txt` warming the full file took
+1.60 s and the two laps 15.2 and 14.7 ms, so neither lap paid anything
+like the cost of faulting the file in. The lap ratio is printed, not
+gated, and varies from run to run: 1.036 there, and 1.04, 1.55 and 1.83
+for B1's 2M-record slice in the headers of the three committed
+`harness_b` and `spin_sweep` CSVs.
 
 **Do not compare across symbols.** The BTC dataset streams from DRAM; the
 ETHW dataset (55,775 records, ~3.1 MB) fits in L2. Comparing them at equal
@@ -918,6 +913,9 @@ python3 tools/inspect_interarrival.py \
 ./build/default/convert_capture CAPTURE.log DATASET.bin BTCUSDT \
     $(git rev-parse HEAD) 0 --require-clean
 python3 tools/validate_capture.py CAPTURE.log DATASET.bin
+
+# Page-warming check: warm the mapping, then time two full traversals
+./build/default/verify_capture DATASET.bin BTCUSDT
 
 # Record the environment before every measurement session
 bash env/dump_environment.sh

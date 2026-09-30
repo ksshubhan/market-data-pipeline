@@ -1,0 +1,41 @@
+=== header ===
+magic: MDCAPBIN
+format_version: 1
+header_size: 64
+record_size: 56
+scale_exponent: 8
+market_type: 1
+stream_type: 1
+flags: 0
+symbol: BTCUSDT
+git_commit: 936f13f0606ea807dd29d2072e2aa40dda964695
+record_count: 13749492
+
+=== mapping ===
+open_seconds: 0.000943875
+records_span: 13749492
+records_aligned: yes
+page_size: 16384
+page_size_apis_agree: yes
+
+=== warming (§6.4a) ===
+warm_seconds: 1.60143
+lap1_seconds: 0.0152067
+lap2_seconds: 0.0146842
+lap1_over_lap2: 1.03558
+
+=== first record ===
+capture_wall_time_ns: 1787231294033876000
+event_time_ms: 1787231293915
+transaction_time_ms: 1787231293915
+bid_price: 7200900000000
+ask_price: 7200910000000
+bid_qty: 306500000
+ask_qty: 218000000
+
+=== last record ===
+capture_wall_time_ns: 1787252931291357000
+bid_price: 7240140000000
+ask_price: 7240150000000
+
+verify_capture: ok
