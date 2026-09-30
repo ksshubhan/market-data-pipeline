@@ -3,21 +3,33 @@
 
 Each mutation is a single-occurrence text replacement in
 src/mutex_queue.hpp. The script applies it, builds test_mutex_queue, runs
-the suite once (or N times for the scheduling-dependent controls) under a
-10 s timeout, and restores the header byte-for-byte before the next one.
+the suite once, or N_SCHED times for M5, M6 and M9, under a 10 s
+timeout, and restores the header byte for byte before the next one. It
+records each outcome and does not compare it with the predictions in
+evidence/mutex_queue_wake_controls_20260919.txt.
 
-It refuses to start unless:
-  - it is run from the repo root with a clean tree,
-  - the predictions file is committed (so every prediction predates
-    its result),
+It refuses, exit 1, unless:
+  - git runs and the tree has no change and no untracked file,
+  - the predictions file is tracked and still contains "PREDICTIONS
+    ONLY", which its status block keeps after the results were appended
+    to it, so this check shows nothing about which came first,
   - src/mutex_queue.hpp and src/test_mutex_queue.cpp match the md5s
     pinned below,
-  - the unmutated suite builds and passes on every one of N runs
-    (positive control, and the evidence that the suite's deadlines
-    produce no false FAIL).
+  - the unmutated suite builds and passes on every one of N_SCHED runs:
+    the positive control, which shows no false FAIL from the suite's
+    deadlines in those runs, not that none can occur.
+Run it from the repository root. Nothing checks that: from a
+subdirectory the predictions path matches nothing, and it refuses as
+though the file were not committed.
 
-It writes its full output, unmodified, to results/ and to stdout.
-Nothing is read from a run whose build failed.
+Once past every refusal it writes what it printed to results/, except
+the final "wrote" line. A refusal, including one after the baseline has
+run, prints to stdout and writes nothing. Nothing is read from a run
+whose build failed. It exits 1, after writing, if the rebuild or the run
+after the header is restored fails or the tree is not clean.
+
+Related: src/mutex_queue.hpp and src/test_mutex_queue.cpp, and the
+committed results/mutex_queue_controls_*.txt.
 """
 
 import datetime
@@ -26,12 +38,10 @@ import platform
 import subprocess
 import sys
 
-# The mutations were written against mutex_queue.hpp at 80c10eb (md5
-# 46399c25) and the predictions against test_mutex_queue.cpp at ee5d6a9
-# (6a91a947). Both files have since had comment-only edits, and the pins
-# are the edited files: their code is unchanged, shown by comparing them
-# with comments stripped and by identical object files. Any edit to either
-# file, comments included, changes its md5 and needs its pin updated.
+# The mutation anchors and the predictions describe these two files as
+# they stand, so both are pinned by md5 and checked before anything runs.
+# Any edit to either file, comments included, changes its md5 and needs
+# its pin updated here.
 HEADER = "src/mutex_queue.hpp"
 HEADER_MD5 = "8f403e291dfa13305e7153034f4e148a"
 TEST = "src/test_mutex_queue.cpp"
@@ -40,8 +50,15 @@ PREDICTIONS = "evidence/mutex_queue_wake_controls_20260919.txt"
 BINARY = "./build/default/test_mutex_queue"
 BUILD = ["cmake", "--build", "--preset", "default",
          "--target", "test_mutex_queue"]
+# Applied here rather than by ctest, since CMakeLists.txt sets no
+# TIMEOUT and a hang under ctest is not a failure. A failing run stops at
+# the suite's 2 s deadline, well inside it.
 TIMEOUT_S = 10
+# Runs for the baseline and for M5, M6 and M9, whose outcome depends on
+# scheduling.
 N_SCHED = 100
+# subprocess reports a death by SIGALRM as -14; 142 is 128 + 14, what a
+# shell prints, and what the results record.
 SIGALRM_EXIT = 142
 
 MUTATIONS = [
@@ -123,6 +140,8 @@ def build():
 
 
 def run_once():
+    # macOS has no timeout(1). A pending alarm survives exec, so SIGALRM
+    # ends the suite itself.
     r = subprocess.run(
         ["perl", "-e", "alarm shift; exec @ARGV", str(TIMEOUT_S), BINARY],
         capture_output=True, text=True)
@@ -138,10 +157,14 @@ def run_once():
 
 
 def main():
+    # git() refuses first, with git's own error, whenever rev-parse fails,
+    # so this message is never printed.
     if git("rev-parse", "--show-toplevel").strip() == "":
         refuse("not inside a git repository")
     if git("status", "--porcelain").strip() != "":
         refuse("working tree is not clean")
+    # The path is relative to the working directory, so from a
+    # subdirectory it matches nothing and this refuses.
     if git("ls-files", PREDICTIONS).strip() != PREDICTIONS:
         refuse(PREDICTIONS + " is not committed; predictions come first")
     with open(PREDICTIONS) as f:
@@ -157,6 +180,8 @@ def main():
     if test_md5 != TEST_MD5:
         refuse(TEST + " md5 " + test_md5 + ", expected " + TEST_MD5)
 
+    # With the header pinned by md5, a count other than 1 can only come
+    # from a pin updated to a header that lacks an anchor.
     text = original.decode("utf-8")
     for tag, _, _, old, _ in MUTATIONS:
         count = text.count(old)
@@ -242,12 +267,15 @@ def main():
         if md5(f.read()) != HEADER_MD5:
             refuse(HEADER + " not restored")
     code, log = build()
+    # -1 means the suite was not run, because the rebuild failed.
     end_code, end_fail = run_once() if code == 0 else (-1, "")
     emit("RESTORED  header md5 verified; rebuild exit " + str(code)
          + ", run exit " + str(end_code))
     status = git("status", "--porcelain").strip()
     emit("Tree:     " + ("clean" if status == "" else "DIRTY: " + status))
 
+    # Written only here, past every refusal: REFUSED lines and the final
+    # "wrote" line are printed and never written.
     with open(out_path, "w") as f:
         f.write("\n".join(out_lines) + "\n")
     print("wrote " + out_path)
