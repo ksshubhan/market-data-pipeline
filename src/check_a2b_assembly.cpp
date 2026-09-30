@@ -2,10 +2,10 @@
 // the A2b and A3b inner loops from false_sharing.hpp in standalone
 // functions, so each loop appears in the binary under its own symbol.
 //
-// tools/make_a2b_evidence.py runs llvm-objdump on the built binary, finds
-// these functions by name, checks that every store loop has one release
-// store (stlr) per iteration and that each pair of A3b loops compiles to
-// the same instructions, and writes
+// tools/make_a2b_evidence.py reads an llvm-objdump listing of this binary,
+// written by the README's command, finds these functions by name, checks
+// that each store loop has one stlr, that both A3b write functions store
+// all 80 bytes and that each A3b pair has identical encodings, and writes
 // evidence/a2b_a3b_arm64_disassembly_20260908.txt. Rename a function only
 // together with that script. Running the program is just a sanity check:
 // it exits 0 if the loops produce the expected values. See ARCHITECTURE.md.
