@@ -1,13 +1,12 @@
-// Standalone one-shot probe: reports the standard library's interference
-// constants together with the toolchain and library version that produced
-// them. Not a CMake target. Compile by hand, commit the output once.
+// Prints the C++ standard library's interference constants beside the
+// compiler, library and target that produced them and, where GCC's
+// __GCC_DESTRUCTIVE_SIZE macro is defined, whether <new> matches it.
 //
-// The value must always be quoted with the library version (PROJECT_PLAN
-// section 5), which is why the version stamp is printed alongside it.
-//
-// Read the constants through <new>, never through a macro dump: under
-// --param=destructive-interference-size=N, "g++ -dM -E -x c++ /dev/null"
-// still reports the target default while a real compilation sees N.
+// Built directly, not through CMake: tools/mcpu_sweep.py compiles it once
+// per -mcpu target and parses its output, and the README gives the
+// single-build command. Committed output is in
+// evidence/interference_libstdcxx_gcc15_aarch64.txt and
+// evidence/mcpu_sweep_gcc_aarch64_20260919.txt.
 
 #include <cstddef>
 #include <iostream>
@@ -17,6 +16,10 @@ int main()
 {
     std::cout << "probe: interference constants\n";
 
+    // The constants are chosen by the toolchain, not measured, so they are
+    // printed with the versions that produced them. Under GCC 15 on aarch64
+    // they also depend on -mcpu, which this program does not print;
+    // mcpu_sweep.py records each build command.
 #if defined(__clang__)
     std::cout << "compiler: clang " << __clang_version__ << '\n';
 #elif defined(__GNUC__)
@@ -44,12 +47,21 @@ int main()
     std::cout << "target: other\n";
 #endif
 
+    // Read from <new> in a real build, not from a macro dump: with
+    // --param=destructive-interference-size=N,
+    // "g++ -dM -E -x c++ /dev/null" still prints the target default,
+    // while a real build sees N.
     const std::size_t destructive = std::hardware_destructive_interference_size;
     const std::size_t constructive = std::hardware_constructive_interference_size;
 
+    // mcpu_sweep.py finds this line and "macro agrees with <new>" by their
+    // labels, and committed evidence contains both, so the labels are fixed.
     std::cout << "hardware_destructive_interference_size: " << destructive << '\n';
     std::cout << "hardware_constructive_interference_size: " << constructive << '\n';
 
+    // libstdc++ 13 and 15 and libc++ 18 define the <new> constants as these
+    // macros, so with them this cannot say NO: it shows only that the macro
+    // is defined.
 #if defined(__GCC_DESTRUCTIVE_SIZE)
     std::cout << "__GCC_DESTRUCTIVE_SIZE: " << __GCC_DESTRUCTIVE_SIZE << '\n';
     std::cout << "macro agrees with <new>: "
