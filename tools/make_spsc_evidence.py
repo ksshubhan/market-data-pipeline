@@ -1,10 +1,24 @@
 #!/usr/bin/env python3
-"""Generate the spsc disassembly evidence file from a live llvm-objdump dump.
+"""Write evidence/spsc_arm64_disassembly_20260908.txt from an
+llvm-objdump listing of build/default/check_spsc_assembly.
 
-Reads the dump, verifies what it contains, and writes the evidence file only
-if every assertion holds. Repo state is computed from git, not asserted.
+Reads the listing from /tmp/spsc_full.txt, which the caller writes with
+the command the README gives; this script runs no disassembler. It
+writes nothing unless the tree is clean and every check holds: the four
+push and pop functions, cached and uncached, each appear once; they hold
+eight ordered instructions between them; each acquire load comes after
+the function's first branch in the cached arm and before it in the
+uncached arm; and no line of the listing matches the read-modify-write
+pattern below.
 
-Run from the repo root of a clean clone built at the current HEAD.
+Only the Repo line of the header is computed, from git. The title date,
+the output filename and the Host, Compiler, Disassembler, SDK and Flags
+lines are fixed text from the 8 Sep run, so a re-run on another
+toolchain writes them unchanged. Nothing checks that the listing came
+from a build of the current HEAD.
+
+Run from the repository root. Related: src/check_spsc_assembly.cpp and
+tools/make_a2b_evidence.py.
 """
 
 import re
@@ -14,6 +28,8 @@ import sys
 DUMP = "/tmp/spsc_full.txt"
 OUT = "evidence/spsc_arm64_disassembly_20260908.txt"
 
+# Written into the header as given: they describe the 8 Sep run, not the
+# machine running this script.
 HOST = "Apple M2, macOS 26.6.2, build 25G83"
 COMPILER = "Homebrew clang 22.1.8, target arm64-apple-darwin25.6.0"
 DISASM = "Homebrew LLVM llvm-objdump 22.1.8"
@@ -22,9 +38,15 @@ FLAGS = "-O2 -g -Wall -Wextra (preset default, RelWithDebInfo)"
 COMMAND = ("/opt/homebrew/opt/llvm/bin/llvm-objdump -d --demangle "
            "build/default/check_spsc_assembly")
 
+# Matched against a symbol's name up to its argument list, so the listing
+# must be demangled; the README's command passes --demangle.
 TARGETS = ["push_once", "pop_once", "push_once_uncached", "pop_once_uncached"]
 
 ORDERED = ("ldar", "ldapr", "ldapur", "stlr", "stlur")
+# Covers CAS, the 64-bit exclusive loads and stores, swap, and the LSE
+# add, set, clear and xor loads. It does not match byte, halfword or pair
+# exclusives, the LSE min and max forms, or store-only aliases such as
+# stadd. It is matched against every line of the listing.
 RMW = r"\b(cas[a-z]*|ld[a-z]*xr|st[a-z]*xr|swp[a-z]*|ldadd[a-z]*|" \
       r"ldset[a-z]*|ldclr[a-z]*|ldeor[a-z]*)\b"
 
@@ -92,6 +114,8 @@ for name in TARGETS:
     ms = mnemonics(by_name[name])
     ordered_total += sum(1 for x in ms if x in ORDERED)
 
+# Eight is what the four functions held on 8 Sep. How the eight split
+# between the arms is not checked.
 if ordered_total != 8:
     fail("expected 8 ordered instructions across the four functions, got %d."
          % ordered_total)
@@ -108,6 +132,10 @@ def is_branch(x):
     return x == "b" or x.startswith("b.") or x in ("cbz", "cbnz", "tbz", "tbnz")
 
 
+# The cached arm's acquire load must follow its first branch, so a call
+# whose cached copy of the other index suffices skips it; the uncached
+# arm's must precede every branch, so every call pays it. bl, br and ret
+# do not count as branches here.
 findings = {}
 for name, acquire in (("push_once", "ldapur"), ("pop_once", "ldapr"),
                       ("push_once_uncached", "ldapur"),
@@ -138,6 +166,10 @@ if rmw_hits:
     fail("read-modify-write instructions found in the binary:\n"
          + "\n".join(rmw_hits))
 
+# Only the Repo line, the listings, the counts and the indices below come
+# from the checks above. The rest is fixed text, and the claims in it,
+# such as four ordered instructions in each arm or the uncached path being
+# the shorter one, are not checked here.
 lines = []
 lines.append("SPSC ring buffer disassembly, both A4 arms "
              "\u2014 8 Sep 2026 (\u00a72, \u00a76.5 A4, \u00a713)")
