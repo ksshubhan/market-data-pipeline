@@ -168,8 +168,7 @@ if rmw_hits:
 
 # Only the Repo line, the listings, the counts and the indices below come
 # from the checks above. The rest is fixed text, and the claims in it,
-# such as four ordered instructions in each arm or the uncached path being
-# the shorter one, are not checked here.
+# such as four ordered instructions in each arm, are not checked here.
 lines = []
 lines.append("SPSC ring buffer disassembly, both A4 arms "
              "\u2014 8 Sep 2026 (\u00a72, \u00a76.5 A4, \u00a713)")
@@ -222,8 +221,7 @@ lines.append("index first and re-reads the shared one only when that copy")
 lines.append("says the queue is full. In the uncached arm the acquire load")
 lines.append("precedes every branch, so it is paid on every call. This is")
 lines.append("the mechanism behind A4b, shown rather than inferred from the")
-lines.append("timing ratio. It also confirms that the uncached path is the")
-lines.append("shorter one: it skips the cache refresh and the recheck.")
+lines.append("timing ratio.")
 lines.append("")
 
 lines.append("--- read-modify-write instructions (expected none) ---")
