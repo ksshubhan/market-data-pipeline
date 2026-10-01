@@ -1036,11 +1036,11 @@ cmake --build build/gcc-tsan --target test_parser test_mutex_queue \
     test_spsc_ring_buffer test_capture_file test_replay_schedule \
     test_replay_producer test_convert_capture c1_relaxed_publication
 
-# Six of seven pass here. mutex_queue exits 132 on SIGILL inside GCC's
-# own pthread_cond_wait interceptor, which twenty lines of standard
-# library reproduce with no project code; the same suite passes under
-# GCC without the sanitizer, and under Apple's ThreadSanitizer.
-# See evidence/gcc_tsan_cv_wait_20260920.txt.
+# Six of seven pass here. mutex_queue exits 132 on SIGILL: GCC's
+# sanitizer runtime branches into glibc's __sigsetjmp through x2, and
+# glibc's BTI landing pad rejects the branch. Twenty lines of standard
+# library reproduce it; the suite passes without the sanitizer and under
+# Apple's ThreadSanitizer. See evidence/gcc_tsan_cv_wait_20260920.txt.
 ctest --test-dir build/gcc-tsan --output-on-failure
 
 # Exits 66: GCC's runtime reports and exits where Apple's aborts.

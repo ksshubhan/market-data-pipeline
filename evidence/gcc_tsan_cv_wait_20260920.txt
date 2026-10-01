@@ -68,3 +68,30 @@ Conclusion: the crash is in GCC's sanitizer runtime, not in MutexQueue.
 The six suites that do not park in a condition variable pass under the
 same build. evidence/tsan_gcc15_aarch64.txt predates test_mutex_queue
 gaining a forced-park test, so its run never entered this interceptor.
+
+Added 2026-10-01: the cause is a BTI branch target exception.
+Re-run in the same guest VM at 6c3327d with the reproducer above (md5
+b9e090ed626191fd0be2a30ec1a3d7c0), the same g++ and glibc
+2.42-0ubuntu3: exit 132 again. gdb at the fault:
+  => 0xfffff68b7ad8 <__GI___sigsetjmp>: bti c
+  $pc = $x2 = 0xfffff68b7ad8
+  $_siginfo.si_code = 1 (ILL_ILLOPC)
+  /proc/cpuinfo Features include paca, pacg and bti; no fpac.
+
+The first instruction of glibc's __sigsetjmp is a BTI landing pad,
+bti c. It accepts a call (blr), or a br through x16 or x17; a br
+through any other register from BTI-enabled code is rejected. The
+sanitizer runtime's aarch64 __sigsetjmp interceptor, reached from
+call_pthread_cancel_with_cleanup in the pthread_cond_wait interceptor,
+tail-jumps to the real __sigsetjmp with br x2, and libtsan is marked
+BTI-enabled, so the CPU rejects the branch and Linux delivers SIGILL.
+x2 holding the faulting address is that tail jump; the interceptor
+leaves no frame because it branches rather than calls. Source:
+libsanitizer/tsan/tsan_rtl_aarch64.S on GCC's releases/gcc-15 branch.
+
+Pointer authentication is not the cause. The [PAC] marks in section 3
+are gdb noting signed return addresses, and without fpac a failed
+authentication corrupts the pointer rather than trapping.
+
+Not run: LLVM's ThreadSanitizer on this guest. Its tsan_rtl_aarch64.S
+on main has the same br x2.
