@@ -5,7 +5,7 @@ Compiler:   Homebrew clang 22.1.8, target arm64-apple-darwin25.6.0
 Disassembler: Homebrew LLVM llvm-objdump 22.1.8
 SDK:        26.5
 Flags:      -O2 -g -Wall -Wextra (preset default, RelWithDebInfo)
-Repo:       8eb0c9b, tree clean (verified by this script via git, not asserted)
+Repo:       3ca81a2, tree clean (verified by this script via git, not asserted)
 Command:    /opt/homebrew/opt/llvm/bin/llvm-objdump -d --demangle build/default/check_spsc_assembly
 
 Supersedes evidence/spsc_arm64_disassembly.txt, which recorded
@@ -145,8 +145,7 @@ index first and re-reads the shared one only when that copy
 says the queue is full. In the uncached arm the acquire load
 precedes every branch, so it is paid on every call. This is
 the mechanism behind A4b, shown rather than inferred from the
-timing ratio. It also confirms that the uncached path is the
-shorter one: it skips the cache refresh and the recheck.
+timing ratio.
 
 --- read-modify-write instructions (expected none) ---
 Swept over the whole disassembly, not one section, for:
