@@ -2,6 +2,8 @@
 //
 // Usage: harness_a <git-commit-40-hex> <dirty:0|1>
 //                  <experiment:a1|a2|a2b|a3b|a4|a4b>
+// The commit and dirty flag are checked against git before anything runs;
+// see provenance.hpp.
 //
 // Each experiment compares a few arms, meaning variants that differ in
 // one thing only:
@@ -29,6 +31,7 @@
 #include "spsc_ring_buffer.hpp"
 #include "measurement_thread.hpp"
 #include "false_sharing.hpp"
+#include "provenance.hpp"
 
 #include <atomic>
 #include <time.h>
@@ -319,9 +322,8 @@ struct RunResult {
 // Provenance is supplied by the caller and written into the results file,
 // so the file itself says which build produced it and the environment dump
 // committed alongside can be matched to it by commit rather than by
-// timestamp. Unlike convert_capture's --require-clean, nothing here checks
-// the commit or dirty flag against git; the README's limitations section
-// says so.
+// timestamp. main checks both against git before anything runs
+// (provenance.hpp).
 struct Provenance {
     std::string git_commit;
     bool dirty;
@@ -946,6 +948,10 @@ int main(int argc, char* argv[])
     Provenance provenance{};
 
     if (!parse_provenance(argc, argv, provenance)) {
+        return 1;
+    }
+
+    if (!verify_provenance(provenance.git_commit, provenance.dirty)) {
         return 1;
     }
 

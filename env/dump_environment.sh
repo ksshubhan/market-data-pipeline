@@ -27,13 +27,15 @@ fi
 
 GIT_COMMIT="$(git -C "$ROOT_DIR" rev-parse HEAD)"
 
-# Dumps from earlier runs are untracked evidence files, not working-tree
-# changes that affect a build, so they are excluded from the dirty check.
-# Without this, a second dump in the same session reports a false dirty
-# state caused by the first. Anything else untracked — a new source file
-# included — still counts as dirty.
-GIT_STATUS="$(git -C "$ROOT_DIR" status --porcelain -- \
-    ':(exclude)env/measurement_environment_*.txt')"
+# The same rule src/provenance.hpp applies for the timed programs, so the
+# two dirty flags recorded for a session can be compared. Any change to a
+# tracked file counts, and so does any untracked file outside results/ and
+# env/. Those two directories hold what the dumps and the timed programs
+# write and feed no build; without the exception a second dump, or one
+# taken after a harness run, would report a dirty tree caused by the
+# session's own output.
+GIT_STATUS="$(git -C "$ROOT_DIR" status --porcelain --untracked-files=all \
+    | grep -v -E '^\?\? (results|env)/' || true)"
 
 if [[ -n "$GIT_STATUS" ]]; then
     GIT_DIRTY="yes"

@@ -3,11 +3,13 @@
 //
 // Usage: measure_parse_cost <git-commit-40-hex> <dirty:0|1> <capture.log>
 //        <SYMBOL>
+// The commit and dirty flag are checked against git before anything runs;
+// see provenance.hpp.
 // Reads the first 200,000 lines of a capture log and prints provenance,
 // three per-message costs and two ratios on stdout; the committed run is
-// results/parse_cost_20260928_171443.txt. Exits 2 on bad arguments and 1
-// on any other failure; macOS only, since it exits 1 unless the QoS class
-// is applied.
+// results/parse_cost_20260928_171443.txt. Exits 2 on bad arguments or
+// unverified provenance and 1 on any other failure; macOS only, since it
+// exits 1 unless the QoS class is applied.
 // Related: parser.cpp (parse_book_ticker, shared with convert_capture),
 // spsc_ring_buffer.hpp (the queue), record.hpp (CaptureRecord and Record).
 //
@@ -34,6 +36,7 @@
 
 #include "measurement_thread.hpp"
 #include "parser.hpp"
+#include "provenance.hpp"
 #include "record.hpp"
 #include "spsc_ring_buffer.hpp"
 
@@ -317,6 +320,10 @@ int main(int argc, char* argv[])
     Options options;
 
     if (!parse_options(argc, argv, options)) {
+        return 2;
+    }
+
+    if (!verify_provenance(options.git_commit, options.dirty)) {
         return 2;
     }
 

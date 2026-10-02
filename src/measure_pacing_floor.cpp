@@ -2,6 +2,8 @@
 // rate it can hold with no queue attached.
 //
 // Usage: measure_pacing_floor <git-commit-40-hex> <dirty:0|1>
+// The commit and dirty flag are checked against git before anything runs;
+// see provenance.hpp.
 // Prints provenance and one CSV row per requested rate on stdout; the
 // committed run is results/pacing_floor_20260928.txt. macOS only: it exits
 // 1 unless the QoS class is applied, and elsewhere it never is.
@@ -22,6 +24,7 @@
 #include "replay_producer.hpp"
 #include "replay_schedule.hpp"
 #include "measurement_thread.hpp"
+#include "provenance.hpp"
 
 #include <cstdint>
 #include <cstdlib>
@@ -115,6 +118,10 @@ int main(int argc, char* argv[])
     bool dirty = false;
 
     if (!parse_provenance(argc, argv, commit, dirty)) {
+        return 1;
+    }
+
+    if (!verify_provenance(commit, dirty)) {
         return 1;
     }
 

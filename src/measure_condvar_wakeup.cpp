@@ -3,6 +3,8 @@
 // below explains why and what replaced it.
 //
 // Usage: measure_condvar_wakeup <git-commit-40-hex> <dirty:0|1>
+// The commit and dirty flag are checked against git before anything runs;
+// see provenance.hpp.
 // Prints its measurements and the derived counts on stdout; the committed
 // runs are results/condvar_wakeup_*.txt. macOS for real numbers; the
 // Linux clock fallback is only so the logic can be exercised elsewhere.
@@ -81,6 +83,7 @@
 // rather than per-iteration for the same reason.
 
 #include "measurement_thread.hpp"
+#include "provenance.hpp"
 
 #include <time.h>
 
@@ -375,8 +378,8 @@ double measure_spin_round(
 
 // ---------------------------------------------------------------------
 // Provenance, supplied by the caller as in harness_a and written into the
-// output, so the results say which build produced them. It is not
-// checked against git.
+// output, so the results say which build produced them. main checks it
+// against git before anything runs.
 // ---------------------------------------------------------------------
 struct Provenance {
     std::string git_commit;
@@ -422,6 +425,10 @@ int main(int argc, char* argv[])
     Provenance provenance;
 
     if (!parse_provenance(argc, argv, provenance)) {
+        return 2;
+    }
+
+    if (!verify_provenance(provenance.git_commit, provenance.dirty)) {
         return 2;
     }
 

@@ -104,6 +104,8 @@ disassembles the same code the harness runs.
 
 - `src/measurement_thread.hpp` — requests a QoS class for the calling thread
   and reads it back, since macOS offers no thread pinning.
+- `src/provenance.hpp` — checks the commit and dirty flag a timed program
+  was given against git before it runs, and refuses on a mismatch.
 - `src/test_child_process.hpp` — runs a function in a forked child so a test
   can assert that a precondition aborts.
 

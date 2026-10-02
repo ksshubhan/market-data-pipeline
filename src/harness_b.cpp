@@ -3,6 +3,8 @@
 // Usage: harness_b <git-commit-40-hex> <dirty:0|1> <capture.bin> <SYMBOL>
 //                  [consumer:book|timestamp] [passes|dump] [spin:1000|8192]
 //        harness_b ... [consumer] spin-sweep
+// The commit and dirty flag are checked against git before anything runs;
+// see provenance.hpp.
 //
 // Replays a fixed slice of the capture at a series of fixed offered
 // rates, through each queue arm in turn, and records the end-to-end
@@ -68,6 +70,7 @@
 #include "capture_file.hpp"
 #include "measurement_thread.hpp"
 #include "mutex_queue.hpp"
+#include "provenance.hpp"
 #include "record.hpp"
 #include "replay_producer.hpp"
 #include "replay_schedule.hpp"
@@ -628,7 +631,8 @@ Datapoint run_datapoint(
 
 
 // ---------------------------------------------------------------------
-// Options, including caller-supplied provenance as in harness_a
+// Options, including caller-supplied provenance as in harness_a, which
+// main checks against git
 // ---------------------------------------------------------------------
 
 struct Options {
@@ -778,6 +782,10 @@ int main(int argc, char* argv[])
     Options options;
 
     if (!parse_options(argc, argv, options)) {
+        return 2;
+    }
+
+    if (!verify_provenance(options.git_commit, options.dirty)) {
         return 2;
     }
 

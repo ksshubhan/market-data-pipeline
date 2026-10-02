@@ -965,8 +965,9 @@ bash env/dump_environment.sh
 # commands the clone is dirty in both files. The bit-for-bit statement
 # above holds for that graph only against the committed CSV. Checked
 # 15 Sep: one run of each changed both md5s, and git checkout -- on the
-# two paths restores them. The harness commands below take their dirty
-# flag from argv. Check git status before measuring, or run these last.
+# two paths restores them. The timed programs refuse a dirty flag of 0 on
+# a tree with changes to tracked files, so run these last or restore the
+# two files first.
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python tools/analyse_harness_b.py results/harness_b_spin8192_*.csv \
                                             results/harness_b_spin1000_*.csv
@@ -1077,16 +1078,27 @@ grew; the current report is `evidence/c1_tsan_report.txt` at `:130`
 against `:100`. Both are kept because deleting a measurement to make the
 repository tidier is the wrong instinct.
 
-**The commit and dirty flag are not.** Both harnesses take them from
-`argv` and neither consults git; only `convert_capture` verifies tree
-state itself, via `--require-clean`. So a results file's `git_dirty: no`
-is the operator's assertion, and the corroboration is
-`env/dump_environment.sh`, which computes the same field from `git status`
-and is re-run before each session. Three artifacts from 4 September record
-`git_dirty: no` beside environment dumps taken in the same second at the
-same commit recording `yes`; they are kept, and the A2b and A4b figures
-above come from re-runs on a tree verified clean before the run. Compare
-the pair, not the flag.
+**The commit and dirty flag are checked against git, from 2 October.**
+The five timed programs, `harness_a`, `harness_b`,
+`measure_condvar_wakeup`, `measure_parse_cost` and
+`measure_pacing_floor`, take both as arguments and check them before
+doing anything else (`src/provenance.hpp`). The commit must be HEAD, and
+a flag of `0` is refused if any tracked file has changed or any untracked
+file exists outside `results/` and `env/`, where the programs and the
+environment dump write. `env/dump_environment.sh` computes its flag by the
+same rule. The check is one-sided: a flag of `1` on a clean tree is
+accepted, since overstating how dirty a build was misleads nobody.
+
+Every committed result predates the check, so in those files
+`git_dirty: no` is the operator's assertion, corroborated by the
+environment dump from the same session. Every result that records the
+flag has a dump from its session except the two from 28 September, the
+pacing floor and the parse-cost re-measurement, which rest on that
+session's own `git status` check. Three artifacts from 4 September
+record `git_dirty: no` beside environment dumps taken in the same second
+at the same commit recording `yes`; they are kept, and the A2b and A4b
+figures above come from re-runs on a tree verified clean before the run.
+For those files, compare the pair, not the flag.
 
 The two dirty flags differ deliberately: measurement runs pass `0`, while
 the tail dump passes `1` because it is a diagnostic rather than a reported
@@ -1112,13 +1124,12 @@ from counters. The disassembly of both A2b arms is committed at
 `evidence/a2b_arm64_disassembly.txt`, confirming the loops differ only in
 slot stride.
 
-**Measurement provenance is corroborated, not enforced.** The harnesses
-trust the caller's commit and dirty flag; the environment dump computes
-both from git. Two sources that agree is the check, and it is weaker than
-`convert_capture`'s, which verifies tree state before it will write. The
-harnesses were left alone deliberately — the gap is documented and the
-affected artifacts re-run, which costs minutes, where making three
-binaries self-verifying costs a day and re-verification on two toolchains.
+**Provenance before 2 October is corroborated, not enforced.** Every
+committed result was written before the timed programs checked their
+commit and dirty flag, so for those files the check is the agreement of
+two sources, the flag and the environment dump, rather than the program
+refusing to run. The check itself runs git in the working directory;
+outside a repository the programs refuse rather than guess.
 
 **Coarse timer.** ~41.67 ns per tick. On x86, `rdtsc` is over 100× finer.
 This methodology exists *because* the ARM timer is coarse.
