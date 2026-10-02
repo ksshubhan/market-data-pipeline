@@ -38,3 +38,10 @@ Result: two independently written race detectors, two operating systems,
 two standard libraries, one verdict — clean on the valid arms, and the
 same race at the same two lines on the invalid one. Per §6.6, a clean run
 with no verified control says only that the tool was quiet.
+
+Appended 2 Oct 2026. The header above gives the configure command and
+not the build command. The run was repeated at c3b948b on 2 Oct, with
+gcc 15.2.0 in an Ubuntu 25.10 aarch64 guest, building by target with
+every command written down: evidence/tsan_gcc15_aarch64_20261002.txt.
+All 20 ctest runs passed 7 of 7, and the control named the same two
+lines. At e8cc389 the same build passes 6 of 7; the same file says why.

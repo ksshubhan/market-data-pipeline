@@ -1,0 +1,57 @@
+LLVM ThreadSanitizer on macOS/ARM64, the tsan preset at e8cc389
+
+evidence/tsan_llvm_ctest_20260907.txt ran at 4a93c03, before ee5d6a9
+added test_mutex_queue's forced-park blocks. Under GCC's sanitizer those
+blocks die on SIGILL (evidence/tsan_gcc15_aarch64_20261002.txt), so until
+this run no committed ThreadSanitizer result covered them.
+
+Run:      2026-10-02 18:43:09 UTC
+Host:     Apple M2, macOS 26.6.2, build 25G83, SDK 26.5
+Compiler: Homebrew clang version 22.1.8, libc++ _LIBCPP_VERSION 220108
+cmake:    4.4.2
+Repo:     e8cc389 on main; git status --porcelain printed no lines
+
+  cmake --preset tsan --fresh
+  cmake --build --preset tsan
+  ctest --test-dir build/tsan --output-on-failure    (20 times)
+  ./build/tsan/c1_relaxed_publication > out.txt 2> err.txt
+
+These are the README's ThreadSanitizer commands, with --fresh so that no
+object from an earlier build was reused, and with the control's stdout
+sent to a file as well. The build exited 0 with no warnings and linked
+all 21 binaries.
+
+All 20 ctest runs exited 0 and printed "100% tests passed out of 7",
+mutex_queue among them. The first:
+
+  1/7 Test #1: parser ...........................   Passed    1.25 sec
+  2/7 Test #2: mutex_queue ......................   Passed    0.58 sec
+  3/7 Test #3: spsc_ring_buffer .................   Passed    0.87 sec
+  4/7 Test #4: capture_file .....................   Passed    0.66 sec
+  5/7 Test #5: replay_schedule ..................   Passed    2.50 sec
+  6/7 Test #6: replay_producer ..................   Passed    1.53 sec
+  7/7 Test #7: convert_capture ..................   Passed   10.62 sec
+
+  100% tests passed out of 7
+
+  Total Test time (real) =  18.03 sec
+
+Negative control, c1_relaxed_publication, in the same build
+
+It exited 134: on macOS the sanitizer ends a run that reported anything
+with abort(). It printed to stdout:
+
+  C1: no observable corruption detected in this finite native run.
+  The implementation remains intentionally invalid C++.
+
+No torn record appeared; the evidence is the race report. stderr holds
+10 reports and ends "ThreadSanitizer: reported 10 warnings". Each is a
+read by thread T2 in try_pop, spsc_ring_buffer.hpp:172, called from
+c1_relaxed_publication.cpp:214, against a previous write of size 8 by
+thread T1 in try_push, spsc_ring_buffer.hpp:140, called from line 197,
+at the same address, in the main thread's stack. The ten addresses,
+0x16b756c00 to 0x16b756c48, are consecutive 8-byte words, 80 bytes in
+all, which is sizeof(Record). Nine reads are of size 8; the tenth, at
+offset 72, where symbol_id, a uint16_t, begins, is of size 2. GCC's
+sanitizer reports the same ten words with the same sizes at the same
+two lines (evidence/tsan_gcc15_aarch64_20261002.txt).

@@ -717,10 +717,15 @@ tool was quiet.
 two independent implementations. Homebrew clang and AppleClang are one
 lineage, LLVM/libc++. GCC 15.2.0 with libstdc++ 15, on ARM64 Linux, is a
 separately written detector on a different operating system and a
-different standard library. All seven suites pass under both, and both
-runs are committed rather than asserted: `evidence/tsan_llvm_ctest_20260907.txt`
-and `evidence/tsan_gcc15_aarch64.txt`. Each carries its own negative
-control, run in the same build as the suites it certifies.
+different standard library. Under LLVM's, all seven suites pass at HEAD
+on each of 20 runs, `evidence/tsan_llvm_ctest_20261002.txt`; the 7 Sep run,
+`evidence/tsan_llvm_ctest_20260907.txt`, predates `mutex_queue`'s
+forced-park blocks. Under GCC's, all seven pass at `c3b948b`; at HEAD six
+do, and `mutex_queue` dies on SIGILL inside GCC's sanitizer runtime for the
+reason the guest block below gives. Both are in
+`evidence/tsan_gcc15_aarch64_20261002.txt`, which repeats the 7 Sep run in
+`evidence/tsan_gcc15_aarch64.txt` with its build command. Each run carries
+its own negative control, in the same build as the suites it certifies.
 
 **The independent run is worth more than a third green tick, because the
 control agrees too.** GCC's ThreadSanitizer flags C1 at
@@ -730,7 +735,10 @@ detectors with no shared code identify the same race at the same two
 lines, and independently find nothing in the valid arms. The workload was
 verified identical rather than assumed: `kCount` is a hardcoded
 `1'000'000`, so the faster Linux wall times are speed, not a smaller
-test. Committed at `evidence/tsan_gcc15_aarch64.txt`.
+test. Committed at `evidence/tsan_gcc15_aarch64.txt`. On 2 Oct both
+detectors reported the same ten 8-byte words of one slot, with the same
+access sizes, in `evidence/tsan_gcc15_aarch64_20261002.txt` and
+`evidence/tsan_llvm_ctest_20261002.txt`.
 
 **The C1 broken-ordering arm is expected to be flagged**, and that report
 is the evidence rather than a failure of the criterion. C1 removes the

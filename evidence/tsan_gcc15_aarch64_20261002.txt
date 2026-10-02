@@ -1,0 +1,108 @@
+GCC ThreadSanitizer on ARM64 Linux, by target, at c3b948b and e8cc389
+
+evidence/tsan_gcc15_aarch64.txt (7 Sep) records its configure command
+and not its build command. This file repeats that run at its commit,
+c3b948b, with every command written down, and runs the same build at
+e8cc389, the HEAD of main on 2 Oct 2026.
+
+Run:      2 Oct 2026, by the host's clock. The guest's clock read
+          2026-09-22 23:02:41 UTC: it stalls while the VM is
+          suspended, so it is recorded here and not used.
+Guest:    Ubuntu 25.10 aarch64, live session under UTM on an Apple M2
+Kernel:   6.17.0-5-generic
+Compiler: g++ (Ubuntu 15.2.0-4ubuntu4) 15.2.0
+libc:     ldd (Ubuntu GLIBC 2.42-0ubuntu3) 2.42
+cmake:    3.31.6, ninja 1.12.1
+CPU:      /proc/cpuinfo lists paca, pacg and bti, and no fpac
+
+Each commit was checked out in its own detached git worktree, with
+git status --porcelain printing no lines before the build. In each:
+
+  cmake -S . -B build/gcc-tsan -G Ninja -DCMAKE_CXX_COMPILER=g++ \
+      -DCMAKE_CXX_FLAGS="-O1 -g -Wall -Wextra -fsanitize=thread" \
+      -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=thread"
+  cmake --build build/gcc-tsan --target test_parser test_mutex_queue \
+      test_spsc_ring_buffer test_capture_file test_replay_schedule \
+      test_replay_producer test_convert_capture c1_relaxed_publication
+  ctest --test-dir build/gcc-tsan --output-on-failure    (20 times)
+  ./build/gcc-tsan/c1_relaxed_publication > out.txt 2> err.txt
+
+These are the README's guest commands, except that the README sends only
+the control's stderr to a file. Both builds exited 0 with no warnings
+and linked nine binaries: the eight named targets and convert_capture,
+which cmake builds as a dependency of test_convert_capture.
+
+c3b948b
+
+All 20 ctest runs exited 0 and printed
+"100% tests passed, 0 tests failed out of 7". The first:
+
+  1/7 Test #1: parser ...........................   Passed    0.01 sec
+  2/7 Test #2: mutex_queue ......................   Passed    0.01 sec
+  3/7 Test #3: spsc_ring_buffer .................   Passed    0.40 sec
+  4/7 Test #4: capture_file .....................   Passed    0.01 sec
+  5/7 Test #5: replay_schedule ..................   Passed    0.08 sec
+  6/7 Test #6: replay_producer ..................   Passed    0.03 sec
+  7/7 Test #7: convert_capture ..................   Passed    2.37 sec
+
+  100% tests passed, 0 tests failed out of 7
+
+  Total Test time (real) =   2.92 sec
+
+e8cc389
+
+All 20 ctest runs exited 8 and printed
+"86% tests passed, 1 tests failed out of 7": mutex_queue failed with
+"***Exception: Illegal" on every run and the other six suites passed on
+every run. The first, with ctest's tab shown as spaces:
+
+  1/7 Test #1: parser ...........................   Passed    0.01 sec
+  2/7 Test #2: mutex_queue ......................***Exception: Illegal  0.01 sec
+
+  3/7 Test #3: spsc_ring_buffer .................   Passed    0.40 sec
+  4/7 Test #4: capture_file .....................   Passed    0.01 sec
+  5/7 Test #5: replay_schedule ..................   Passed    0.09 sec
+  6/7 Test #6: replay_producer ..................   Passed    0.03 sec
+  7/7 Test #7: convert_capture ..................   Passed    2.37 sec
+
+  86% tests passed, 1 tests failed out of 7
+
+  Total Test time (real) =   2.92 sec
+
+  The following tests FAILED:
+            2 - mutex_queue (ILLEGAL)
+  Errors while running CTest
+
+mutex_queue is the only suite that blocks in a condition_variable wait,
+and from ee5d6a9 it forces one. Under GCC 15's ThreadSanitizer on this
+guest that wait reaches the sanitizer's __sigsetjmp interceptor, which
+branches into glibc with br x2; glibc's bti c landing pad accepts no br
+except through x16 or x17, and the CPU raises SIGILL.
+evidence/gcc_tsan_cv_wait_20260920.txt reproduces it in twenty lines of
+standard library. At c3b948b the suite never forces a park, and since a
+park dies the same way, none of these 20 runs parked by chance either.
+
+Negative control, c1_relaxed_publication, in the same builds
+
+Both exited 66 and printed to stdout:
+
+  C1: no observable corruption detected in this finite native run.
+  The implementation remains intentionally invalid C++.
+
+No torn record appeared in either run; the evidence is the race report.
+Each stderr holds 10 reports and ends "ThreadSanitizer: reported 10
+warnings". Each is a read by thread T2 in try_pop against a previous
+write of size 8 by thread T1 in try_push, at the same address, in the main
+thread's stack, where the control declares its queue. The ten addresses
+are consecutive 8-byte words, 80 bytes in all, which is sizeof(Record):
+one report per word of one slot's record. Nine reads are of size 8. The
+tenth, at offset 72, is of size 2: that word starts with symbol_id, a
+uint16_t.
+
+              read, try_pop     write, try_push   addresses
+  c3b948b     hpp:130 (cpp:176) hpp:100 (cpp:159) 0xffffffffeb80-0xffffffffebc8
+  e8cc389     hpp:172 (cpp:214) hpp:140 (cpp:197) 0xffffffffeb80-0xffffffffebc8
+
+hpp is src/spsc_ring_buffer.hpp, cpp src/c1_relaxed_publication.cpp. The
+lines moved between the commits with comments added above them; at
+c3b948b they are the two lines evidence/tsan_gcc15_aarch64.txt names.
