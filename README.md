@@ -216,10 +216,11 @@ the honest comparison to lead with: if parse dominates the cheapest
 possible handoff, it dominates the real one.
 
 **This is a schema-specific key scanner, not a general JSON parser.** It
-assumes a known Binance bookTicker layout and does a single left-to-right
-pass with no DOM, no allocation and no floating point. A generic library
-that builds a DOM and allocates would cost more, by an amount not measured
-here, so this figure must not be quoted as "the cost of JSON parsing".
+assumes Binance's bookTicker schema but not its field order, and does a
+single left-to-right pass with no DOM, no allocation and no floating
+point. A generic library that builds a DOM and allocates would cost more,
+by an amount not measured here, so this figure must not be quoted as "the
+cost of JSON parsing".
 
 The 1.14 ns copy figure is a **floor, not a like-for-like third arm** — a
 56-byte assignment in a tight loop over an 11.2 MB array, with no clock
@@ -688,11 +689,14 @@ validator tested only against good input tests nothing.
 and no clock, and it exists for one trap: written as
 `max(0, current - previous)` the operands are unsigned, so a backwards
 capture-clock step wraps instead of clamping, and the wrapped gap sends
-the schedule silently *backwards* rather than forwards — a producer reads
-that as already overdue and sends immediately, destroying pacing with no
-visible symptom. `test_replay_producer` covers the rejection path, which
-had never executed before that file existed, and checks that a rejected
-record still uses a sequence number. `test_convert_capture` drives
+the schedule *backwards* with the clock rather than forwards. Every
+later record then comes due early, so the producer sends at full speed
+until it catches up, a burst the capture never contained. The error
+shows up only as producer lag and latency that look like a scheduler
+stall, and nothing in the output names its cause.
+`test_replay_producer` covers the rejection path, which had never
+executed before that file existed, and checks that a rejected record
+still uses a sequence number. `test_convert_capture` drives
 the converter as a child process, because exit statuses, stderr and
 what is left on disk do not survive being called as a function; its
 header names the failure paths it does not reach.
@@ -1048,11 +1052,12 @@ cmake --build build/gcc-tsan --target test_parser test_mutex_queue \
 # Six of seven pass here. mutex_queue exits 132 on SIGILL: GCC's
 # sanitizer runtime branches into glibc's __sigsetjmp through x2, and
 # glibc's BTI landing pad rejects the branch. Twenty lines of standard
-# library reproduce it; the suite passes without the sanitizer and under
-# Apple's ThreadSanitizer. See evidence/gcc_tsan_cv_wait_20260920.txt.
+# library reproduce it (evidence/gcc_tsan_cv_wait_20260920.txt). The
+# suite passes without the sanitizer, and under LLVM's ThreadSanitizer on
+# macOS (evidence/tsan_llvm_ctest_20261002.txt).
 ctest --test-dir build/gcc-tsan --output-on-failure
 
-# Exits 66: GCC's runtime reports and exits where Apple's aborts.
+# Exits 66: GCC's runtime reports and exits where LLVM's on macOS aborts.
 ./build/gcc-tsan/c1_relaxed_publication 2> /tmp/c1_tsan_gcc.txt
 ```
 
