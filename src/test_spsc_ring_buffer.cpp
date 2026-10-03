@@ -4,9 +4,10 @@
 // full on three queues: the default (acquire-release, cached), a seq_cst
 // one and an uncached one. The default and uncached queues are also
 // checked once their slot indices wrap. A Record is pushed and popped to
-// check every field but reserved survives the slot copy. Two two-thread
-// cases, on the default and the uncached queue, hand 1,000,000 values from
-// a producer thread to a consumer thread and check each arrives in order.
+// check every field but reserved survives the slot copy. Three two-thread
+// cases, on the default, the uncached and a seq_cst queue, hand 1,000,000
+// values from a producer thread to a consumer thread and check each
+// arrives in order.
 //
 // The first failed check prints a FAIL line to stderr and the run exits 1
 // there.
@@ -140,6 +141,63 @@ bool test_uncached_two_thread()
             if (value != expected) {
                 std::cerr
                     << "FAIL: uncached two-thread handoff corrupted FIFO"
+                       " order at index "
+                    << expected
+                    << ", observed "
+                    << value
+                    << '\n';
+
+                failed.store(true, std::memory_order_release);
+                return;
+            }
+        }
+    });
+
+    std::thread producer([&] {
+        for (std::uint64_t value = 0; value < kCount; ++value) {
+            while (!queue.try_push(value)) {
+                if (failed.load(std::memory_order_acquire)) {
+                    return;
+                }
+            }
+        }
+    });
+
+    producer.join();
+    consumer.join();
+
+    return !failed.load(std::memory_order_acquire);
+}
+
+
+// SeqCst selects its own memory order for every index access, and
+// test_seq_cst_queue runs on one thread, where no ordering can be wrong.
+// Only a second thread shows that those orders still publish each value.
+bool test_seq_cst_two_thread()
+{
+    constexpr std::uint64_t kCount = 1'000'000;
+
+    using Queue = SpscRingBuffer<
+        std::uint64_t,
+        1024,
+        128,
+        SpscMemoryOrder::SeqCst
+    >;
+
+    Queue queue;
+
+    std::atomic<bool> failed{false};
+
+    std::thread consumer([&] {
+        for (std::uint64_t expected = 0; expected < kCount; ++expected) {
+            std::uint64_t value = 0;
+
+            while (!queue.try_pop(value)) {
+            }
+
+            if (value != expected) {
+                std::cerr
+                    << "FAIL: seq_cst two-thread handoff corrupted FIFO"
                        " order at index "
                     << expected
                     << ", observed "
@@ -480,6 +538,10 @@ int main()
     }
 
     if (!test_uncached_two_thread()) {
+        return 1;
+    }
+
+    if (!test_seq_cst_two_thread()) {
         return 1;
     }
 
