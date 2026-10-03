@@ -39,12 +39,10 @@ enum class ParseError {
 
 // Prices and quantities are stored as integers scaled by 10^8. The
 // captures need at most 6 fractional digits (results/inspect_capture_*), so
-// 8 is headroom. The scale is written down in four places that nothing
-// ties together: kFixedPointScale, which is not used anywhere;
-// kFixedPointFractionalDigits; the length of kPowersOfTen in parser.cpp;
-// and kCaptureScaleExponent in capture_file.hpp, which convert_capture
-// writes into every .bin header.
-inline constexpr std::int64_t kFixedPointScale = 100'000'000;
+// 8 is headroom. kFixedPointFractionalDigits is the one definition: the
+// length of kPowersOfTen in parser.cpp and kCaptureScaleExponent in
+// capture_file.hpp, which convert_capture writes into every .bin header,
+// are each checked against it at compile time.
 inline constexpr std::size_t kFixedPointFractionalDigits = 8;
 
 // Converts "digits" or "digits.digits", with at most 8 fractional digits,

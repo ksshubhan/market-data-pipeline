@@ -44,6 +44,8 @@
 static_assert(sizeof(BinaryHeader) == 64);
 static_assert(sizeof(CaptureRecord) == 56);
 static_assert(kCaptureRecordSize == sizeof(CaptureRecord));
+// The header records the parser's scale, so the two must not drift.
+static_assert(kCaptureScaleExponent == kFixedPointFractionalDigits);
 
 
 namespace {

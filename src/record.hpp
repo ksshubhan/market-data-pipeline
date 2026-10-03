@@ -80,14 +80,18 @@ struct Record {
 // Trivially copyable: a CaptureRecord is written to and read from the .bin
 // as raw bytes, and both types are copied by plain assignment through the
 // queue's slots. Standard layout: offsetof below is only well-defined on
-// standard-layout types. The sizes pin the layout, and because the members
-// add up to exactly 56 and 80 bytes they also rule out padding anywhere in
-// either type.
+// standard-layout types. The sizes pin the layout. Unique object
+// representations means equal fields give equal bytes: no padding bits,
+// and no float, whose +0 and -0 compare equal with different bytes. The
+// compiler checks this rather than relying on the members adding up.
 static_assert(std::is_trivially_copyable_v<CaptureRecord>);
 static_assert(std::is_trivially_copyable_v<Record>);
 
 static_assert(std::is_standard_layout_v<CaptureRecord>);
 static_assert(std::is_standard_layout_v<Record>);
+
+static_assert(std::has_unique_object_representations_v<CaptureRecord>);
+static_assert(std::has_unique_object_representations_v<Record>);
 
 static_assert(sizeof(CaptureRecord) == 56);
 static_assert(sizeof(Record) == 80);

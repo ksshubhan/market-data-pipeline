@@ -42,8 +42,8 @@ enum class SpscMemoryOrder {
 // opposite index on every call instead, turning a rare cross-core acquire
 // load into one per operation.
 //
-// Both variants are wait-free: the uncached path is in fact shorter, two
-// loads and a compare with no branch back. The cached path's worst case
+// Both variants are wait-free. Uncached loads the shared index on every
+// call, cached only when its own copy says full or empty; its worst case
 // is also two loads. Neither can loop.
 enum class SpscIndexCaching {
     Cached,

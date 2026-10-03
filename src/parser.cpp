@@ -18,8 +18,8 @@
 
 namespace {
 // Indexed by how many of the 8 fractional digits an input left out, 0 to 8,
-// to scale its mantissa up to 10^8. The length is tied to
-// kFixedPointFractionalDigits by hand, not checked by the compiler.
+// to scale its mantissa up to 10^8, so it holds one entry more than there
+// are fractional digits.
 constexpr std::int64_t kPowersOfTen[] = {
     1,
     10,
@@ -31,6 +31,7 @@ constexpr std::int64_t kPowersOfTen[] = {
     10'000'000,
     100'000'000
 };
+static_assert(std::size(kPowersOfTen) == kFixedPointFractionalDigits + 1);
 
 void skip_whitespace(
     std::string_view input,
