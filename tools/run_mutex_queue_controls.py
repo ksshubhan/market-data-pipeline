@@ -50,9 +50,9 @@ PREDICTIONS = "evidence/mutex_queue_wake_controls_20260919.txt"
 BINARY = "./build/default/test_mutex_queue"
 BUILD = ["cmake", "--build", "--preset", "default",
          "--target", "test_mutex_queue"]
-# Applied here rather than by ctest, since CMakeLists.txt sets no
-# TIMEOUT and a hang under ctest is not a failure. A failing run stops at
-# the suite's 2 s deadline, well inside it.
+# Applied here rather than by ctest, since this runs the binary directly
+# and a ctest TIMEOUT does not reach it. A failing run stops at the
+# suite's 2 s deadline, well inside it.
 TIMEOUT_S = 10
 # Runs for the baseline and for M5, M6 and M9, whose outcome depends on
 # scheduling.

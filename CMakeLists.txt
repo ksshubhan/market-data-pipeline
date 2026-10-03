@@ -121,3 +121,9 @@ add_test(NAME capture_file COMMAND test_capture_file)
 add_test(NAME replay_schedule COMMAND test_replay_schedule)
 add_test(NAME replay_producer COMMAND test_replay_producer)
 add_test(NAME convert_capture COMMAND test_convert_capture)
+
+# The two-thread suites wait on records another thread sends, so a queue
+# that loses one could hang ctest indefinitely. On the M2 under
+# ThreadSanitizer each passed in under a second, and test_mutex_queue
+# fails on its own 2 s deadlines, so 10 s leaves its message time to print.
+set_tests_properties(mutex_queue spsc_ring_buffer PROPERTIES TIMEOUT 10)
