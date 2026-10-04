@@ -94,3 +94,13 @@ functions with (SpscIndexCaching)1. The control ran the cached arm. The
 uncached arm is covered in this run by spsc_ring_buffer, whose test
 instantiates SpscIndexCaching::Uncached and passed above with the other
 six suites. No figure in this file changes.
+
+--- Correction appended 4 Oct 2026, on top of 42bec99. Lines 65-70
+--- above are left unedited.
+
+Lines 67-68 call LLVM's and GCC's ThreadSanitizers two independently
+written detectors. They share their runtime: GCC's libsanitizer is
+imported from LLVM's compiler-rt, the runtime this run uses. The GCC
+run varies the compiler's instrumentation, the standard library, the C
+library and the operating system over the same detection code. No
+figure in this file changes.

@@ -5,10 +5,14 @@ against a tuned `std::mutex` + condition variable queue under controlled
 offered load, on macOS/ARM64.
 
 **p99 handoff latency 125 ns against 375 ns** for the tuned baseline at
-500k msg/s, both arms passing the same validity gates.
+500k msg/s, both arms passing the same validity gates. Latency runs from
+each message's scheduled send time to the consumer's pop returning.
+500k/s is the lowest swept rate at which the baseline's spin outlasts
+the gap between messages, so it parks on under 0.1% of them; it is also
+the smallest p99 ratio in the B1 table.
 
-C++20, ~8,500 lines of source excluding blanks and comments and ~12,800
-including them, across 34 files in `src/`. Every measurement in this
+C++20, ~8,800 lines of source excluding blanks and comments and ~13,800
+including them, across 35 files in `src/`. Every measurement in this
 README has its command in [How to reproduce](#how-to-reproduce) and names
 the artifact it comes from. Most figures here have been recomputed from
 those artifacts rather than read back; the two exceptions are named where
@@ -70,8 +74,9 @@ power, Low Power Mode off, `QOS_CLASS_USER_INTERACTIVE` requested and
 
 ### B1 — end-to-end latency under controlled offered load
 
-Latency is measured from *intended* send time to consumer-processed, with
-the send schedule computed before the clock starts. Median of three
+Latency is measured from *intended* send time to the moment the
+consumer's pop returns, before it updates the book, with the send
+schedule computed before the clock starts. Median of three
 passes for each baseline configuration. The spsc arm is identically
 configured in both runs, so `analyse_harness_b.py` pools them and its
 points are the median of six — the script prints the count per cell, and
@@ -239,13 +244,14 @@ reasoning that split the harnesses in the first place.
 
 ### A-series microbenchmarks
 
-Two-thread queue microbenchmark, batched timing, 10M handoffs per arm.
+Microbenchmarks with batched timing: the clock is read around a whole
+run rather than around each operation, so each result is a mean.
 
 | # | Result | Strength |
 |---|---|---|
 | **A1b** | Acquire-release is **1.23×** faster than `seq_cst` in the real queue (33.07 vs 26.88 M handoffs/s) | No distribution overlap. Two runs five days apart agree: 1.25 and 1.23 |
 | **A1a** | Ordering cost is **not measurable** in a bare atomic ping-pong: relaxed 36.9, acq-rel 38.5, seq_cst 38.3 ns/handoff | A null result, and the explanation is the point — see below |
-| **A2b** | The coherence granule is **64 bytes** — contradicting `hw.cachelinesize` (128) and libc++'s `hardware_destructive_interference_size` (256) | Two runs three days apart agree: 3.566× and 3.596× against a shared line, with the 64/128/256 arms within 0.207% and 0.160% of each other. 64 bytes buys the whole benefit; 128 and 256 add nothing measurable |
+| **A2b** | The coherence granule is **64 bytes** — smaller than both `hw.cachelinesize` (128, the fetch size) and libc++'s `hardware_destructive_interference_size` (256) | Two runs three days apart agree: 3.566× and 3.596× against a shared line, with the 64/128/256 arms within 0.207% and 0.160% of each other. 64 bytes buys the whole benefit; 128 and 256 add nothing measurable |
 | **A3b** | Natural 80-byte ring slots cost **1.81×** against 128-byte padded slots | No overlap. The two arms' loop bodies are **byte-identical** — 13 write instructions and 21 read instructions with the same encodings in the same order — so the ratio cannot be an instruction-selection artifact; the stores also cover the full 80 bytes contiguously, with no gap and nothing narrowed (`evidence/a2b_a3b_arm64_disassembly_20260908.txt`) |
 | **A4b** | Caching the opposite index saves **~10 ns/push**, 1.36× | Cached faster in 17 of 20 paired rounds at 5 MB, **20 of 20** at 80 MB, and 19 of 20 on the 7 Sep re-run at 80 MB. Medians 1.400×, 1.359× and 1.396× — the headline quotes the 80 MB figure. Quote the median, not the mean: the 5 MB run's cached arm spans 17.4 to 83.4 M ops/s around a 35.3 median, which is core placement rather than the queue, and its mean ratio reads 1.52× |
 
@@ -379,11 +385,12 @@ nothing; the replay producer abandons and loses one. Conflating them
 double-counts, and under a zero-drop gate it would have marked every
 harness A datapoint invalid.
 
-**The mutex baseline is tuned, and the tuning is derived.** Signal only on
-the empty→non-empty transition; bounded consumer spin before blocking;
-identical `try_push`/`try_pop` interface and identical reject-newest
-semantics, so the two arms are not doing different things above
-saturation.
+**The mutex baseline is tuned, not a strawman.** Signal only on the
+empty→non-empty transition; bounded consumer spin before blocking, its
+length chosen by measurement (see [the spin
+count](#the-spin-count-and-the-derivation-that-was-wrong)); identical
+`try_push`/`try_pop` interface and identical reject-newest semantics, so
+the two arms are not doing different things above saturation.
 
 ---
 
@@ -441,13 +448,15 @@ The timer steps in ~41.67 ns (24 MHz; `mach_timebase_info` returns 125/3,
 confirmed by measurement). ARM's cycle counter is PMU-gated and unreadable
 from userspace here, so 24 MHz is the ceiling rather than a default.
 
-The handoff is ~80 ns and a JSON parse is ~1,000–3,000 ns. Hunting a 10 ns
-ordering delta inside a 2,000 ns measurement gives three overlapping
-distributions and nothing to report. So:
+A1b's queue moves a record between threads in ~30 ns, amortised over a
+pipelined run, and the choice of memory ordering changes that by ~7 ns.
+Timing each message cannot resolve that: the clock steps in 41.67 ns,
+and an end-to-end distribution's upper percentiles sit on a ~12 µs
+scheduler floor (B1). So:
 
 | Harness | Timing method | Produces |
 |---|---|---|
-| **A** | Batched: one clock read, 10M ops, one clock read | Means only |
+| **A** | Batched: the clock read around a whole run, not each operation | Means only |
 | **B** | Per-message timestamps | Full percentile distributions |
 | **C** | No timing; sequence oracle | Failure evidence |
 
@@ -582,8 +591,14 @@ Oversizing quietly narrows the gap that is the result. A4b saw exactly
 this: the cached-index advantage fell from 1.400 at 5 MB to 1.359 at
 80 MB.
 
-The pilot recorded **zero dropped records at every rate on every arm**, so
-the criterion is met.
+Both B1 sweeps, `results/harness_b_spin8192_20260905_131415.csv` and
+`results/harness_b_spin1000_20260905_131750.csv`, and the spin sweep,
+`results/spin_sweep_20260905_130613.csv`, record **zero dropped records
+at every rate on every arm**. Depth is not recorded, but the CSVs bound
+it: every message still queued was due no earlier than the row's maximum
+latency ago, so depth is at most that latency times the rate, plus one.
+Across every valid row the bound is 4,358 slots, under the 8,192 the
+criterion allows.
 
 ### The spin count, and the derivation that was wrong
 
@@ -717,30 +732,36 @@ the payload. The report is committed at `evidence/c1_tsan_report.txt`.
 A "TSan clean" claim with no verified negative control says only that the
 tool was quiet.
 
-**ThreadSanitizer clean on the valid arms**, on three toolchains across
-two independent implementations. Homebrew clang and AppleClang are one
-lineage, LLVM/libc++. GCC 15.2.0 with libstdc++ 15, on ARM64 Linux, is a
-separately written detector on a different operating system and a
-different standard library. Under LLVM's, all seven suites pass at HEAD
+**ThreadSanitizer clean on the valid arms**, under three toolchains that
+share one detection runtime: GCC's sanitizer runtime is imported from
+LLVM's compiler-rt, so Homebrew clang, AppleClang and GCC 15.2.0 detect
+races with the same code at different versions. What differs is the
+instrumentation each compiler inserts, the standard library and the
+operating system: libc++ on macOS for the two clangs, libstdc++ 15 on
+ARM64 Linux for GCC. AppleClang's run covers the SPSC tests and harness
+C only (`results/harness_c_apple_tsan_20260831.txt`). Under LLVM's, all
+seven suites pass at `e8cc389`
 on each of 20 runs, `evidence/tsan_llvm_ctest_20261002.txt`; the 7 Sep run,
 `evidence/tsan_llvm_ctest_20260907.txt`, predates `mutex_queue`'s
-forced-park blocks. Under GCC's, all seven pass at `c3b948b`; at HEAD six
-do, and `mutex_queue` dies on SIGILL inside GCC's sanitizer runtime for the
-reason the guest block below gives. Both are in
+forced-park blocks. Under GCC's, all seven pass at `c3b948b`; at
+`e8cc389` six do, and `mutex_queue` dies on SIGILL inside GCC's sanitizer
+runtime for the reason the guest block below gives. Both are in
 `evidence/tsan_gcc15_aarch64_20261002.txt`, which repeats the 7 Sep run in
-`evidence/tsan_gcc15_aarch64.txt` with its build command. Each run carries
-its own negative control, in the same build as the suites it certifies.
+`evidence/tsan_gcc15_aarch64.txt` with its build command. The LLVM and
+GCC runs each carry their own negative control, in the same build as the
+suites they certify.
 
-**The independent run is worth more than a third green tick, because the
-control agrees too.** GCC's ThreadSanitizer flags C1 at
-the payload read in `try_pop` against the payload store in `try_push` —
-the same two non-atomic payload accesses LLVM named, not the index. Two
-detectors with no shared code identify the same race at the same two
-lines, and independently find nothing in the valid arms. The workload was
+**The GCC run checks the instrumentation, not the detector.** Its control
+fires too: GCC's build flags C1 at the payload read in `try_pop` against
+the payload store in `try_push`, the same two non-atomic accesses the
+LLVM build names, not the index. With the runtime shared, that agreement
+shows that a different compiler's instrumentation, standard library and
+C library neither hide the race nor report one in the valid arms; it is
+not a second detector reaching the same verdict. The workload was
 verified identical rather than assumed: `kCount` is a hardcoded
 `1'000'000`, so the faster Linux wall times are speed, not a smaller
 test. Committed at `evidence/tsan_gcc15_aarch64.txt`. On 2 Oct both
-detectors reported the same ten 8-byte words of one slot, with the same
+builds reported the same ten 8-byte words of one slot, with the same
 access sizes, in `evidence/tsan_gcc15_aarch64_20261002.txt` and
 `evidence/tsan_llvm_ctest_20261002.txt`.
 
@@ -845,7 +866,7 @@ agree under drop-newest with no retry), `book_updates == delivered` (the
 consumer did the work the methodology claims), and QoS applied on both
 threads. `assert` is not used for these — both build presets define
 `NDEBUG`, which once left the entire parser test suite compiling to
-nothing and exiting 0 for three days.
+nothing and exiting 0 for six days.
 
 ---
 
@@ -1086,10 +1107,12 @@ the consumer-bound A4 configuration, in which the cached index measures
 *slower* — 0.844×. A4b replaced it with a producer-bound arm and is the
 row quoted above; A4's result is not a contradiction, it is the reason
 A4b exists. `results/c1_tsan_20260831.txt` names the C1 race at
-`spsc_ring_buffer.hpp:93` against `:72`, the line numbers before the file
-grew; the current report is `evidence/c1_tsan_report.txt` at `:130`
-against `:100`. Both are kept because deleting a measurement to make the
-repository tidier is the wrong instinct.
+`spsc_ring_buffer.hpp:93` against `:72` and `evidence/c1_tsan_report.txt`
+(5 September) at `:130` against `:100`: each report carries the file's
+line numbers at the time, and the 2 October runs name `:172` against
+`:140` (`evidence/tsan_llvm_ctest_20261002.txt`). They are kept
+because deleting a measurement to make the repository tidier is the
+wrong instinct.
 
 **The commit and dirty flag are checked against git, from 2 October.**
 The five timed programs, `harness_a`, `harness_b`,
@@ -1133,9 +1156,10 @@ Expect higher run-to-run variance than a pinned Linux box would show.
 
 **No PMU access.** `perf c2c` for false-sharing counter evidence is Linux
 + PMU only, so A2b infers the coherence granule from timing rather than
-from counters. The disassembly of both A2b arms is committed at
-`evidence/a2b_arm64_disassembly.txt`, confirming the loops differ only in
-slot stride.
+from counters. Its four store loops disassemble to the same seven
+instructions with identical encodings, one `stlr` per iteration
+(`evidence/a2b_a3b_arm64_disassembly_20260908.txt`), so the arms differ
+only in how far apart the two counters sit.
 
 **Provenance before 2 October is corroborated, not enforced.** Every
 committed result was written before the timed programs checked their
@@ -1171,12 +1195,13 @@ is only meaningful where one arm crosses it and the other does not. At
 the comparison inverts — that is an artifact of the fixed threshold, not
 a reversal.
 
-**ThreadSanitizer now has two independent implementations, not three
-toolchains of one.** Homebrew clang and AppleClang are a single
-LLVM/libc++ lineage; GCC 15 on ARM64 Linux is separately written. Both
-report clean on the valid arms and both flag C1 at the same two lines.
-The remaining limitation is narrower: all three run on ARM64, so nothing
-here is a cross-architecture check.
+**ThreadSanitizer has one detection runtime here, not two.** GCC's
+sanitizer runtime is imported from LLVM's compiler-rt, so all three
+toolchains detect races with the same code, at different versions. The
+GCC run varies the compiler's instrumentation, the standard library and
+the operating system, which is worth checking but is not independent
+detection. All three run on ARM64, so nothing here is a
+cross-architecture check either.
 
 **The interference constants are closed, and the 256 is a default rather
 than a judgement.** libstdc++ 15.2.0 on aarch64 reports 256 destructive
@@ -1235,5 +1260,5 @@ lag rather than as schedule spacing. Gaps in the 100 µs – 1 ms band are
 spacing, most but not all of which is below that ceiling. Stated as
 contamination rather than waved off.
 
-B3 is measured, by direct comparison rather than as an end-to-end arm —
-see above for why.
+**B3 is not an end-to-end arm.** Parse cost is measured by direct
+comparison with a handoff; its section above gives the reason.
