@@ -26,10 +26,8 @@ deltas = [int(line) for line in raw.split()]
 
 # Caption statistics
 beyond_display = len([x for x in deltas if x > display_max_ns])
-# Above 1000 ns, where calibrate.cpp's microsecond bucket starts at 1000:
-# a difference of exactly 1000 ns, 24 ticks, is counted there and not
-# here.
-context_switches = len([x for x in deltas if x > 1000])
+# 1000 ns and above, the bounds of calibrate.cpp's microsecond bucket.
+microsecond = len([x for x in deltas if x >= 1000])
 max_delta = max(deltas)
 
 
@@ -47,8 +45,9 @@ plt.subplots_adjust(bottom=0.20)
 plt.figtext(
     0.5,
     0.055,
-    f"{beyond_display} of {len(deltas)} samples exceed the {display_max_ns} ns display range; "
-    f"{context_switches} exceed 1 µs (context switches), with the remainder sub-µs stalls.",
+    f"{beyond_display:,} of {len(deltas):,} samples lie beyond the "
+    f"{display_max_ns} ns display range: {microsecond} at 1 µs or more, "
+    f"the rest below 1 µs.",
     ha="center",
     fontsize=8
 )
