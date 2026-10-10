@@ -1,30 +1,181 @@
 # Low-Latency Market Data Pipeline
 
-A wait-free SPSC ring buffer feeding a market data handler, measured
-against a tuned `std::mutex` + condition variable queue under controlled
-offered load, on macOS/ARM64.
+A C++20 pipeline that replays real Binance futures market data from one
+thread to another through a wait-free single-producer, single-consumer
+(SPSC) ring buffer, and measures it against a tuned `std::mutex` and
+condition-variable queue under controlled load on an Apple M2 (ARM64).
 
-**p99 handoff latency 125 ns against 375 ns** for the tuned baseline at
-500k msg/s, both arms passing the same validity gates. Latency runs from
-each message's scheduled send time to the consumer's pop returning.
-500k/s is the lowest swept rate at which the baseline's spin outlasts
-the gap between messages, so it parks on under 0.1% of them; it is also
-the smallest p99 ratio in the B1 table.
+Built between August and October 2026 to study lock-free concurrency,
+memory ordering on a weakly-ordered CPU, and how to measure latency with
+a clock that ticks every 41.67 ns.
+
+**Headline:** at 500k messages/s, p99 handoff latency is **125 ns** for
+the SPSC ring buffer against **375 ns** for the tuned mutex queue, both
+passing the same validity gates. Latency runs from each message's
+scheduled send time to the consumer's pop returning. 500k/s is the
+lowest swept rate at which the baseline's spin outlasts the gap between
+messages, so it parks on under 0.1% of them; it is also the smallest
+p99 ratio in the B1 table.
+
+## What it does
+
+- **Captures** Binance USD-M futures `bookTicker` messages, each carrying
+  the best bid and ask with their quantities, and converts a
+  13,749,492-message BTCUSDT capture into a binary dataset of fixed-point
+  records with an allocation-free parser.
+- **Replays** the dataset through the queue under test at fixed offered
+  rates from 100k to 20M messages/s, 2,000,000 messages per run, and
+  records every message's latency.
+- **Compares** two queues behind the same `try_push`/`try_pop` interface:
+  a wait-free SPSC ring buffer built on acquire/release atomics, with no
+  lock and no compare-and-swap, and a `std::mutex` + condition-variable
+  queue that spins 8,192 times before it blocks.
+- **Microbenchmarks** the choices underneath: memory ordering, false
+  sharing, slot padding, index caching and JSON parse cost.
+- **Checks its own correctness** with ThreadSanitizer and a deliberately
+  broken control it must flag, a 2×10⁹-message stress run, deliberate
+  faults the baseline's tests must catch, and an independent Python
+  check of every parsed record.
+
+## How it works
+
+```
+Binance websocket
+      │  tools/capture.py
+      ▼
+captures/*.log         one JSON message per line, with its receive time
+      │  convert_capture
+      ▼
+captures/*.bin         56-byte fixed-point records, memory-mapped
+      │
+      ▼
+producer thread ──try_push──▶ SPSC ring or mutex queue ──try_pop──▶ consumer thread
+```
+
+1. **Capture.** `tools/capture.py` records the websocket stream to a
+   log, one message per line with its local receive time.
+2. **Convert.** `convert_capture` parses each JSON line into a 56-byte
+   record of scaled integers, with no floating point and no allocation,
+   and publishes the `.bin` only if every line parsed.
+3. **Schedule.** Before the clock starts, the harness computes when each
+   record should be sent, so a slow consumer cannot slow the schedule
+   down and hide its own delay (coordinated omission).
+4. **Replay.** The producer thread pushes each record at its scheduled
+   time. If the queue is full, the record is dropped and counted.
+5. **Consume.** The consumer thread pops each record, timestamps it,
+   then updates its top-of-book. Latency is computed after the run.
+6. **Gate.** A datapoint counts only if nothing was dropped and the
+   producer kept to its schedule at p99. Failing datapoints stay in the
+   results, marked invalid.
+
+[ARCHITECTURE.md](ARCHITECTURE.md) maps every component to its files.
+
+## Key results
+
+All measured on the Apple M2. The [Results](#results) section below has
+the graphs, the method behind each number and the file it comes from.
+
+| Experiment | Result |
+|---|---|
+| **B1** p99 handoff latency at 500k msg/s | SPSC **125 ns**, tuned mutex 375 ns |
+| **B1** messages delayed 1 µs or more at 100k msg/s | SPSC 12,081 of 2,000,000, mutex 1,062,550: **88× fewer** |
+| **B1** p99.9 latency, 100k–1M msg/s | SPSC ~12–13 µs, mutex ~19–21 µs, both dominated by macOS scheduling stalls rather than the queue |
+| **A1b** acquire/release against `seq_cst` in the queue | acquire/release **1.23×** faster |
+| **A2b** false sharing between two counters | gone at **64 bytes** apart, where `hw.cachelinesize` reports 128 and libc++ 256 |
+| **A3b** natural 80-byte slots against 128-byte padded slots | natural slots cost **1.81×** |
+| **A4b** caching the other thread's index | **1.40×**, ~11 ns per push |
+| **B3** parsing a message against a single-threaded push and pop | **170.8 ns** against 6.06 ns, 28.2× |
+
+## Tech stack
+
+| Layer | Technology |
+|---|---|
+| Language | C++20 |
+| Build | CMake presets with Ninja, Homebrew LLVM (clang 22) |
+| Platform | macOS 26 on Apple M2 (4 performance + 4 efficiency cores) |
+| Cross-checks | Ubuntu 25.10 aarch64 guest under UTM, GCC 15.2 |
+| Testing | ctest (7 suites), ThreadSanitizer under LLVM and GCC |
+| Analysis | Python 3 with matplotlib (packages pinned in `requirements.txt`), awk |
+| Data | Binance USD-M futures `bookTicker` websocket stream |
+
+## Repository layout
+
+```
+src/              queues, parser, converter, harnesses and the 7 test suites
+tools/            capture, validation and analysis scripts, evidence generators
+scripts/          the timer-calibration plot
+results/          measurement output and the graphs
+evidence/         correctness, sanitizer and disassembly evidence
+env/              session environment dumps, the dump script, exchange metadata
+ARCHITECTURE.md   how the components fit together, file by file
+```
+
+## Running it
+
+Needs macOS, Homebrew LLVM, CMake and Ninja. Three programs call
+macOS-only APIs with no fallback, and four more refuse to run without
+the macOS QoS class.
+
+```sh
+cmake --preset default
+cmake --build --preset default
+ctest --test-dir build/default --output-on-failure
+```
+
+The measurements also need a Binance capture. [How to
+reproduce](#how-to-reproduce) has the command behind every measurement
+in this README.
+
+## Lessons
+
+- **Measure the cost you are reasoning about.** The spin count was first
+  derived from a ski-rental bound as 1000. Measuring showed the bound had
+  left out what parking costs the producer, and the measured choice is
+  8192. Both are kept in [the spin
+  count](#the-spin-count-and-the-derivation-that-was-wrong).
+- **On this machine, p99.9 measures the operating system.** Both queues'
+  upper percentiles rest on a ~12 µs floor of scheduler stalls, so the
+  queue difference shows at p99 and below, which is why p99 is the
+  headline.
+- **A clean sanitizer run means little without a control that fails.**
+  The deliberately broken C1 arm must be flagged in the same build, and
+  it is, at the payload copy rather than the index.
+- **Tests need testing too.** With `notify_one()` deleted from the
+  baseline queue, its tests still passed 100 of 100 runs, until they were
+  changed to wait for the consumer to block first.
+- **The machine's own numbers disagree.** `hw.cachelinesize` says 128
+  bytes and libc++ says 256, but 64 bytes of separation removes false
+  sharing on this M2.
+
+## Known limitations
+
+- macOS offers no thread pinning, so p99.9 and above reflect the
+  scheduler, not the queue.
+- The clock ticks every 41.67 ns, so per-message latencies come in
+  steps of that size, and the microbenchmarks time whole runs instead.
+- Single producer and single consumer only, and a full queue drops the
+  newest message.
+- Latency is measured on one machine; the Linux cross-checks cover
+  correctness and compiler behaviour, not latency.
+
+More are in [Limitations](#limitations).
+
+## About this write-up
+
+The rest of this README is the full write-up: the problem, each result
+with its method, the design decisions, the methodology, the correctness
+evidence, how to reproduce each measurement, and the limitations.
 
 C++20, ~8,800 lines of source excluding blanks and comments and ~13,800
-including them, across 35 files in `src/`. Every measurement in this
-README has its command in [How to reproduce](#how-to-reproduce) and names
-the artifact it comes from. Most figures here have been recomputed from
+including them, across 35 files in `src/`. Every measurement below has
+its command in [How to reproduce](#how-to-reproduce) and names the
+artifact it comes from. Most figures here have been recomputed from
 those artifacts rather than read back. Some can be checked against
 their file but not re-derived from it: B3's parse-cost table, the
 condvar wake-up runs and the harness C stress run record only their
 reduced result, the pacing floor records only its percentiles, and the
 tail-stall tables and the capture analyses come from reductions whose
 raw input is not committed.
-
-How the code is organised, meaning the components, the data flow
-between them and which file does what, is in
-[ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
