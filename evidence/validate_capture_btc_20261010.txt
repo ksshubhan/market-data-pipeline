@@ -1,0 +1,50 @@
+BTCUSDT dataset checked against its capture log, 10 Oct 2026
+
+Session:  Sat 10 Oct 2026 20:10:09 UTC to 20:18:02 UTC. This check
+          ran last, after the ThreadSanitizer run in
+          evidence/tsan_llvm_ctest_20261010.txt
+Host:     Apple M2, macOS 26.6.2, Python 3.14.7
+Repo:     d060176 on main; git status --porcelain printed no lines
+          before the run and after it
+Command:  caffeinate -i python3 tools/validate_capture.py \
+            captures/btcusdt_futures_bookTicker_20260820_130813.log \
+            captures/btcusdt_futures_bookTicker_20260820_130813.bin
+          with its output sent to /tmp/r58tsan/validate.txt
+Inputs:   the .log is 2,531,810,570 bytes and the .bin 769,971,616, a
+          64-byte header and 13,749,492 records of 56 bytes. Neither is
+          committed.
+
+tools/validate_capture.py converts every log line itself, with json and
+decimal.Decimal rather than the C++ parser, and compares it field by
+field with the record at the same position; the record count and the
+absence of trailing bytes close the check. It exited 0, which it does
+only when every record matches, no price is zero or negative and no
+quantity is negative. The git commit it prints is the one the .bin's
+header records for the conversion, not the one that ran this check.
+
+Its output, quoted in full:
+
+  validation complete
+    records:    13749492
+    symbol:     BTCUSDT
+    git commit: 936f13f0606ea807dd29d2072e2aa40dda964695
+    dirty:      no
+
+  feed observations (§7.5)
+    records:              13,749,492
+    transaction vs event time (T vs E):
+      T <  E:             2,984,236
+      T == E:             10,765,256
+      T >  E:             0
+      max (E - T):        30 ms
+      => T <= E holds for every record in this capture
+    ranges:
+      min bid price:      71100.00000000
+      min ask price:      71101.80000000
+      bid qty:            0.00100000  ..  285.78800000
+      ask qty:            0.00100000  ..  390.96200000
+      zero bid qty:       0
+      zero ask qty:       0
+    book:
+      crossed (bid>ask):  0
+      locked  (bid==ask): 0

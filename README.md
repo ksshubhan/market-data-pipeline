@@ -15,10 +15,12 @@ C++20, ~8,800 lines of source excluding blanks and comments and ~13,800
 including them, across 35 files in `src/`. Every measurement in this
 README has its command in [How to reproduce](#how-to-reproduce) and names
 the artifact it comes from. Most figures here have been recomputed from
-those artifacts rather than read back; the two exceptions are named where
-they appear — B3's parse-cost table and the harness C stress record only
-their reduced result, so they can be checked against the file but not
-re-derived from it.
+those artifacts rather than read back. Some can be checked against
+their file but not re-derived from it: B3's parse-cost table, the
+condvar wake-up runs and the harness C stress run record only their
+reduced result, the pacing floor records only its percentiles, and the
+tail-stall tables and the capture analyses come from reductions whose
+raw input is not committed.
 
 How the code is organised, meaning the components, the data flow
 between them and which file does what, is in
@@ -53,8 +55,11 @@ market moved, because bursts and volatility arrive together.
 
 *p99.9 end-to-end latency against offered rate, log/log, valid datapoints
 only. Median of three passes per baseline configuration; the spsc arm is
-configured identically in both files, so its points are the median of six. The three lines converge because all three
-sit on the same ~12 µs scheduler floor — see [the scheduler
+configured identically in both files, so its points are the median of
+six. The mutex lines sit 1.5–1.8× above spsc, where the p99 ratios in
+the table below run from 3× to 76×, because at p99.9 all three are
+dominated by the same scheduler floor: spsc sits on it at 12–16 µs and
+the two mutex configurations above it at 19–21 µs — see [the scheduler
 floor](#the-scheduler-floor-why-p999-is-not-the-headline-here). Each
 line stops where its arm fails the producer-lag gate: the parking
 configuration above 250k/s, the tuned one above 1M/s, the spsc arm above
@@ -65,12 +70,20 @@ configuration above 250k/s, the tuned one above 1M/s, the spsc arm above
 *The same three configurations across p50 to max at a single offered
 rate. The gap is widest at p50 and p99 and closes as the scheduler floor
 takes over — which is the whole story of this measurement in one
-picture.*
+picture. The one exception is the parking configuration's maximum,
+450 µs against spsc's 63 µs.*
 
 All figures from an Apple M2 (4 P-cores + 4 E-cores, fanless), mains
-power, Low Power Mode off, `QOS_CLASS_USER_INTERACTIVE` requested and
-**read back** on every measurement thread. Full environment dumps in
-`env/`, one per measurement session.
+power, Low Power Mode off. The five timed programs — `harness_a`,
+`harness_b`, `measure_condvar_wakeup`, `measure_parse_cost` and
+`measure_pacing_floor` — request `QOS_CLASS_USER_INTERACTIVE` and **read
+it back** on every timed thread. The background writer in
+`measure_condvar_wakeup`'s contended-spin arm runs at the default class,
+`calibrate` and `verify_capture` set none, and the 30 August A1 run
+predates it. Environment dumps are in `env/`, one per measurement
+session; the results that record a dirty flag but have no dump from
+their own session are named at the end of
+[How to reproduce](#how-to-reproduce).
 
 ### B1 — end-to-end latency under controlled offered load
 
@@ -78,8 +91,11 @@ Latency is measured from *intended* send time to the moment the
 consumer's pop returns, before it updates the book, with the send
 schedule computed before the clock starts. Median of three
 passes for each baseline configuration. The spsc arm is identically
-configured in both runs, so `analyse_harness_b.py` pools them and its
-points are the median of six — the script prints the count per cell, and
+configured in both runs,
+`results/harness_b_spin8192_20260905_131415.csv` and
+`results/harness_b_spin1000_20260905_131750.csv`, so
+`analyse_harness_b.py` pools them and its points are the median of
+six — the script prints the count per cell, and
 it reads 6/6 against 3/3. Only datapoints passing both validity gates are
 shown.
 
@@ -95,10 +111,10 @@ Three configurations:
 
 | Offered rate | spsc p50 | tuned p50 | spsc p99 | tuned p99 | p99 ratio |
 |---|---|---|---|---|---|
-| 100k/s | 83 | 4,880 | 167 | 11,380 | 68× |
-| 250k/s | 83 | 334 | 125 | 9,540 | 76× |
+| 100k/s | 83 | 4,875 | 167 | 11,375 | 68× |
+| 250k/s | 83 | 334 | 125 | 9,542 | 76× |
 | 500k/s | 83 | 166 | 125 | 375 | **3.0×** |
-| 1M/s | 83 | 167 | 125 | 3,380 | 27× |
+| 1M/s | 83 | 167 | 125 | 3,375 | 27× |
 
 **p99.9 latency, microseconds:**
 
@@ -110,14 +126,17 @@ Three configurations:
 | 1M/s | 12.69 | 20.42 | 1.61× |
 
 **The p99.9 ratio is small, and the reason is the most interesting result
-in the project.** Both arms sit on a ~12 µs floor imposed by the machine,
-not by either queue. See [the scheduler
+in the project.** At p99.9 both arms are dominated by a floor the machine
+imposes, not either queue: spsc sits on it at ~12–13 µs and the tuned
+mutex 1.5–1.6× above it. See [the scheduler
 floor](#the-scheduler-floor-why-p999-is-not-the-headline-here).
 
 ### Messages disturbed — the metric p99.9 cannot express
 
-Counting messages delayed past 1 µs, at equal offered rate. Insensitive
-to the scheduler floor that dominates both arms' upper percentiles.
+Counting messages delayed by 1 µs or more, at equal offered rate, from
+`results/tail_stalls_20260905_151604.txt`. The scheduler floor adds to
+both counts, but a count is not pinned to it the way the upper
+percentiles are.
 
 | Offered rate | spsc | mutex-tuned | ratio |
 |---|---|---|---|
@@ -128,7 +147,7 @@ messages — on a quiet queue its 8192-iteration spin lasts about 2.4 µs,
 well short of the 10 µs gap between messages — and each park costs the
 producer a wake syscall on the critical path of its own send schedule.
 The lock-free arm never parks. Same machine, same rate, same scheduler
-floor: 88× fewer messages delayed past a microsecond.
+floor: 88× fewer messages delayed by a microsecond or more.
 
 Worth naming what that 53.1% is, because the heading could mislead. It is
 not tail behaviour on the baseline arm — a cost paid on every other
@@ -139,7 +158,8 @@ below.
 
 ### The scheduler floor: why p99.9 is not the headline here
 
-Dumping every sample above 1 µs and grouping them into stalls:
+Dumping every sample of 1 µs or more and grouping them into stalls
+(`results/tail_stalls_20260905_151604.txt`) gives:
 
 | | stalls/s | messages per stall | worst latency in stall |
 |---|---|---|---|
@@ -251,9 +271,9 @@ run rather than around each operation, so each result is a mean.
 |---|---|---|
 | **A1b** | Acquire-release is **1.23×** faster than `seq_cst` in the real queue (33.07 vs 26.88 M handoffs/s) | No distribution overlap. Two runs five days apart agree: 1.25 and 1.23 |
 | **A1a** | Ordering cost is **not measurable** in a bare atomic ping-pong: relaxed 36.9, acq-rel 38.5, seq_cst 38.3 ns/handoff | A null result, and the explanation is the point — see below |
-| **A2b** | The coherence granule is **64 bytes** — smaller than both `hw.cachelinesize` (128, the fetch size) and libc++'s `hardware_destructive_interference_size` (256) | Two runs three days apart agree: 3.566× and 3.596× against a shared line, with the 64/128/256 arms within 0.207% and 0.160% of each other. 64 bytes buys the whole benefit; 128 and 256 add nothing measurable |
-| **A3b** | Natural 80-byte ring slots cost **1.81×** against 128-byte padded slots | No overlap. The two arms' loop bodies are **byte-identical** — 13 write instructions and 21 read instructions with the same encodings in the same order — so the ratio cannot be an instruction-selection artifact; the stores also cover the full 80 bytes contiguously, with no gap and nothing narrowed (`evidence/a2b_a3b_arm64_disassembly_20260908.txt`) |
-| **A4b** | Caching the opposite index saves **~10 ns/push**, 1.36× | Cached faster in 17 of 20 paired rounds at 5 MB, **20 of 20** at 80 MB, and 19 of 20 on the 7 Sep re-run at 80 MB. Medians 1.400×, 1.359× and 1.396× — the headline quotes the 80 MB figure. Quote the median, not the mean: the 5 MB run's cached arm spans 17.4 to 83.4 M ops/s around a 35.3 median, which is core placement rather than the queue, and its mean ratio reads 1.52× |
+| **A2b** | False sharing is gone at **64 bytes** of separation — less than both `hw.cachelinesize` (128, the fetch size) and libc++'s `hardware_destructive_interference_size` (256) | Two runs three days apart agree: 3.566× and 3.596× against a shared line, with the 64/128/256 arms within 0.207% and 0.160% of each other. 64 bytes buys the whole benefit; 128 and 256 add nothing measurable. There is no 32-byte arm, so this bounds the coherence granule at 64 bytes rather than pinning it |
+| **A3b** | Natural 80-byte ring slots cost **1.81×** against 128-byte padded slots | No overlap. The two arms' functions are **byte-identical** — 13 instructions in each write function and 21 in each read function, with the same encodings in the same order — so the ratio cannot be an instruction-selection artifact; the stores also cover the full 80 bytes contiguously, with no gap and nothing narrowed (`evidence/a2b_a3b_arm64_disassembly_20260908.txt`) |
+| **A4b** | Caching the opposite index saves **~11 ns/push**, 1.40× | From the 7 Sep run at 80 MiB, the one taken on a tree verified clean: cached faster in 19 of 20 paired rounds. Two 4 Sep runs agree, 1.400× at 5 MiB (17 of 20) and 1.359× at 80 MiB (**20 of 20**), but their tree was not clean (see the end of [How to reproduce](#how-to-reproduce)). Quote the median, not the mean: the 5 MiB run's cached arm spans 17.4 to 83.4 M ops/s around a 35.3 median, which is core placement rather than the queue, and its mean ratio reads 1.52× |
 
 **A1a's null result is more informative than a number would have been.**
 A bare ping-pong serialises every handoff behind a cross-core coherence
@@ -267,19 +287,23 @@ emit the same four ordered instructions. What differs is where the
 cross-core acquire load sits. Counting instructions from the start of
 each function, it is at index 5 against a first branch at 4 in
 `push_once`, and 4 against 3 in `pop_once` — reached only once the
-producer's cached copy of the consumer index says the queue is full. In
+cached copy of the opposite index runs out: the producer's says the
+queue is full, or the consumer's says it is empty. In
 the uncached pair it is at index 1 against branches at 4 and 3: second
 instruction in, before any branch, paid on every call. That is a causal
-account of the 1.36× rather than an inference from it, and the indices
+account of the 1.40× rather than an inference from it, and the indices
 are computed by the script that writes
 `evidence/spsc_arm64_disassembly_20260908.txt` rather than read off by
-eye. It does not settle which arm does less work: the uncached
+eye. The listing is of the 1,024-slot queue `check_spsc_assembly`
+builds, not the 1,048,576-slot one A4b times; both are the same
+template. It does not settle which arm does less work: the uncached
 push is shorter, 23 instructions against 28, only because it has
 no refresh block, and A4b's cached producer never runs that block.
 
 **Three of the M2's cache numbers disagree**, and this project can say
 which one governs: `hw.cachelinesize` reports 128 (fetch granularity),
-the standard library reports 256, and A2b measures **64** (coherence).
+the standard library reports 256, and A2b finds **64** enough to remove
+false sharing (coherence).
 
 **The 256 turned out to be a default rather than a judgement.** Both
 libc++ builds report it — LLVM 220108 and Apple 210106 — but they are one
@@ -382,8 +406,8 @@ datapoint has zero drops**.
 returned `false` — a queue event. `dropped_records` counts records the
 *caller* abandoned — a policy decision. Harness A retries and loses
 nothing; the replay producer abandons and loses one. Conflating them
-double-counts, and under a zero-drop gate it would have marked every
-harness A datapoint invalid.
+double-counts, and under a zero-drop gate it would have marked harness A
+datapoints invalid for rejections that lost nothing.
 
 **The mutex baseline is tuned, not a strawman.** Signal only on the
 empty→non-empty transition; bounded consumer spin before blocking, its
@@ -486,10 +510,10 @@ population.
 
 The histogram is bimodal with nothing between, which is the evidence that
 the uniform-phase assumption holds. In the committed run it found 746
-multi-tick samples (memory stalls) and **nine** microsecond-scale samples
+multi-tick samples and **nine** microsecond-scale samples
 — 1.0 to 30.8 µs, median 11.1 µs — context switches, observed before the
 queue existed, and the same mechanism that produces the scheduler floor in
-B1. Nine is the count; the magnitude is the 11.1 µs median, and it is the
+B1. Nine is the count; the magnitude is the 11.1 µs median, close to the
 ~12 µs floor B1 measures.
 
 Both counts belong to that run rather than to the machine, and a re-run
@@ -517,8 +541,8 @@ wrong on the page.
 Because capture timestamps are unsigned, a backwards NTP step wraps rather
 than going negative, so the replay schedule is built from **cumulative
 clamped gaps written as an explicit comparison**, not `max(0, b - a)` —
-which is a no-op on unsigned arithmetic and would convert a millisecond
-backwards step into a ~585-year forward jump. Neither capture contains a
+which is a no-op on unsigned arithmetic: a millisecond backwards step
+would wrap to a gap of ~585 years. Neither capture contains a
 backwards step — `results/inspect_capture_btc_20260905_154358.txt` and
 `results/inspect_capture_ethw_20260905_154357.txt` both report zero — so on
 these data the clamp is a guard rather than a correction.
@@ -527,7 +551,8 @@ The capture timestamp is taken *after* the Python websocket library hands
 the message up, so it carries interpreter and asyncio jitter. It is fine
 for replay pacing and burst shape. It is **not** an arrival timestamp.
 
-**That jitter is measured, not estimated, and it is ~1 ms.** Binance's
+**That jitter is measured, not estimated: typically ~1 ms, and 18 to
+29 ms at p90.** Binance's
 event time `E` is quantised to a millisecond and comes off the exchange's
 clock rather than this machine's, so a pair genuinely emitted *d* apart
 shares an exchange millisecond with probability 1 − *d*/1 ms under uniform
@@ -542,9 +567,10 @@ bucket by bucket:
 | > 10 ms | 32,958 | 0.02% | ~0% | — | 1,656 ms |
 
 The Δ`E` column needs no threshold to read: pairs the capture clock places
-1–10 µs apart are up to 18 ms apart at the exchange. Below a millisecond
-the capture clock is wrong by three to four orders of magnitude on a large
-fraction of pairs; at and above a millisecond it tracks, reproducing the
+1–10 µs apart are 18 ms or more apart at the exchange one time in ten.
+Between 1 µs and 1 ms the capture clock is wrong for most pairs — only
+23% to 43% are genuine — and at p90 by 18 to 29 ms;
+at and above a millisecond it tracks, reproducing the
 capture-gap distribution to within 0.4% from p90 upward — 1,234 ms against
 1,238 ms, 3,723 against 3,723, 11,046 against 11,048. The 0.64 ms residual
 at p50 is smaller than `E`'s own millisecond quantum: Δ`E` is a difference
@@ -584,12 +610,12 @@ capacity.
 
 Smallest, not largest, and the reason is not memory. A larger ring means
 the producer stores into slots that have fallen out of cache and the
-consumer reads cold ones. That cost is additive and near-identical in
-absolute nanoseconds for both arms — so it is a large fraction of the
-spsc push and a small fraction of one that takes a lock.
-Oversizing quietly narrows the gap that is the result. A4b saw exactly
-this: the cached-index advantage fell from 1.400 at 5 MB to 1.359 at
-80 MB.
+consumer reads cold ones. That cost should be additive and similar
+in absolute nanoseconds for both arms — so it would be a large fraction
+of the spsc push and a small fraction of one that takes a lock, and
+oversizing would quietly narrow the gap that is the result. That is
+reasoning, not a measurement: A4b's runs at 5 MiB and 80 MiB, 1.400×
+against 1.359× and 1.396×, are too close to show it.
 
 Both B1 sweeps, `results/harness_b_spin8192_20260905_131415.csv` and
 `results/harness_b_spin1000_20260905_131750.csv`, and the spin sweep,
@@ -697,14 +723,15 @@ is blocked in `wait()` before it pushes or closes, and the second round,
 `evidence/mutex_queue_wake_controls_20260919.txt` with
 `results/mutex_queue_controls_20260919_212628.txt`, catches all six, each
 wake fault on 100 of 100 runs. `test_capture_file` covers the dataset
-reader by building a valid ten-record file in memory, corrupting exactly
-one field per case and asserting the specific error comes back; a
+reader by building a valid ten-record file in memory, breaking it one way
+per case and asserting the specific error comes back; a
 validator tested only against good input tests nothing.
-`test_replay_schedule` is eight cases of pure arithmetic with no threads
-and no clock, and it exists for one trap: written as
+`test_replay_schedule` is eight cases with no threads and no clock,
+and it exists for one trap: written as
 `max(0, current - previous)` the operands are unsigned, so a backwards
-capture-clock step wraps instead of clamping, and the wrapped gap sends
-the schedule *backwards* with the clock rather than forwards. Every
+capture-clock step wraps instead of clamping, and in an uncompressed
+schedule the wrapped gap carries the offsets *backwards* with the clock
+rather than forwards. Every
 later record then comes due early, so the producer sends at full speed
 until it catches up, a burst the capture never contained. The error
 shows up only as producer lag and latency that look like a scheduler
@@ -716,9 +743,12 @@ the converter as a child process, because exit statuses, stderr and
 what is left on disk do not survive being called as a function; its
 header names the failure paths it does not reach.
 
-`harness_b`'s three run-time consistency checks abort rather than warn,
-and each has been shown to fire: `evidence/harness_b_guards_20260907.txt`
-arms them one at a time with a one-line code change and records the exit.
+`harness_b`'s run-time consistency checks abort rather than warn, and
+three of the four have been shown to fire:
+`evidence/harness_b_guards_20260907.txt` arms them one at a time with a
+one-line code change and records the exit. The fourth, which exits
+if a delivered sequence number falls outside the schedule, has never
+been armed.
 None has fired from a real condition, so this shows the checks are
 reachable and their diagnostics correct, not that the conditions they
 test occur on this machine.
@@ -739,11 +769,15 @@ races with the same code at different versions. What differs is the
 instrumentation each compiler inserts, the standard library and the
 operating system: libc++ on macOS for the two clangs, libstdc++ 15 on
 ARM64 Linux for GCC. AppleClang's run covers the SPSC tests and harness
-C only (`results/harness_c_apple_tsan_20260831.txt`). Under LLVM's, all
-seven suites pass at `e8cc389`
-on each of 20 runs, `evidence/tsan_llvm_ctest_20261002.txt`; the 7 Sep run,
-`evidence/tsan_llvm_ctest_20260907.txt`, predates `mutex_queue`'s
-forced-park blocks. Under GCC's, all seven pass at `c3b948b`; at
+C only (`results/harness_c_apple_tsan_20260831.txt`), and predates the
+uncached arm, added on 4 Sep. Under LLVM's, all seven suites pass at
+`d060176` on each of 20 runs, `evidence/tsan_llvm_ctest_20261010.txt`,
+the first LLVM run to include `spsc_ring_buffer`'s two-thread `seq_cst`
+handoff, added at `b750b37`. They also pass at `e8cc389` on each of 20
+runs, `evidence/tsan_llvm_ctest_20261002.txt`, the first LLVM run to
+include `mutex_queue`'s forced-park blocks, which the 7 Sep run,
+`evidence/tsan_llvm_ctest_20260907.txt`, predates.
+Under GCC's, all seven pass at `c3b948b`; at
 `e8cc389` six do, and `mutex_queue` dies on SIGILL inside GCC's sanitizer
 runtime for the reason the guest block below gives. Both are in
 `evidence/tsan_gcc15_aarch64_20261002.txt`, which repeats the 7 Sep run in
@@ -824,41 +858,40 @@ widths.
 
 **Parser validated exhaustively and independently.** All 13,749,492
 records round-tripped against their originating log lines by a separate
-Python implementation using `decimal.Decimal` — not the C++ parser, so a
-shared digit-counting bug cannot cancel itself out. A deliberate one-byte
-corruption of the binary was detected and named. A deliberately malformed
-input caused the converter to fail loudly and leave neither `.bin` nor
-`.bin.<pid>.tmp` behind.
+Python implementation, `tools/validate_capture.py`, using
+`decimal.Decimal` — not the C++ parser, so a shared digit-counting bug
+cannot cancel itself out (`evidence/validate_capture_btc_20261010.txt`).
+`test_convert_capture` feeds the converter a malformed line and requires
+it to exit 1 and leave neither a `.bin` nor a temporary file behind.
 
 **The published `.bin` is durable, and publishing it is exclusive.** The
 temporary file is flushed with `F_FULLFSYNC` before it is published,
 not `fsync`: on Darwin `fsync` hands the data to the drive and returns,
 leaving it free to sit in the drive's own volatile write cache, and
-`F_FULLFSYNC` is the call that asks for that cache to be flushed.
+`F_FULLFSYNC` is the call that asks for that cache to be flushed. A
+filesystem that rejects `F_FULLFSYNC` gets `fsync` instead, with a
+warning, and the converter reports which barrier it got.
 Publishing is `link` then `unlink` rather than `rename`, because
 `rename` replaces whatever is at the destination and the
 refuse-to-overwrite check runs at startup, hundreds of milliseconds
-earlier. Forty converters launched at once against one output path: one
-publishes, the rest are refused, five of them by the publish itself. The
-same forty against a build that renamed instead published twelve times
-and kept the last.
+earlier. `test_convert_capture` launches eight converters at once
+against one output path and requires that exactly one publishes, the
+rest are refused, and no temporary file is left behind.
 
 **Properties of the feed, recorded rather than assumed.** Over all
-13,749,492 records: `T <= E` holds universally — 78% have `T == E`, 22%
+13,749,492 records (`evidence/validate_capture_btc_20261010.txt`):
+`T <= E` holds universally — 78% have `T == E`, 22%
 have `T < E` with a maximum lag of 30 ms, and **no record has `T > E`**.
-Both fields are `uint64` on the wire, so `E - T` underflows rather than
-going negative; the check compares operands rather than testing the sign
-of a difference, which is the same unsigned trap the replay clamp
-documents. Minimum quantity is 0.001 on both sides with no zeros, which
+Both fields are `uint64` in `CaptureRecord`, where `E - T` would
+underflow rather than go negative; the validator, in Python, compares
+the operands anyway, the form the C++ side needs — the same unsigned
+trap the replay clamp documents. Minimum quantity is 0.001 on both
+sides with no zeros, which
 independently corroborates BTCUSDT's `stepSize` from the `exchangeInfo`
 snapshot, `env/binance_futures_exchangeInfo_20260820.json`, whose fetch
 time is recorded in `env/binance_futures_exchangeInfo_20260820.fetched_at.txt`.
 **No crossed or locked books in the entire capture** — bid is
 strictly below ask on every message.
-
-**Byte-identical output across two conversions** six days apart on
-different commits: 13,749,492 records identical, with only the provenance
-fields differing.
 
 **Checks that abort rather than warn.** Harness B enforces, at run time
 and at `-O2`: `full_rejections == dropped_records` (the two counters must
@@ -872,7 +905,7 @@ nothing and exiting 0 for six days.
 
 ## How to reproduce
 
-Requires Homebrew LLVM (not Apple Clang), CMake, and a Binance capture.
+Requires Homebrew LLVM (not Apple Clang), CMake, Ninja and a Binance capture.
 
 ```sh
 cmake --preset default
@@ -911,7 +944,9 @@ awk -f tools/classify_c1_runs.awk /tmp/c1_runs.txt
 # minutes. Writes results/mutex_queue_controls_*.txt. It runs the
 # predictions in evidence/mutex_queue_wake_controls_20260919.txt; the
 # earlier round was run by the earlier version of this script, whose
-# commit is the HEAD line in that round's results file.
+# commit is the HEAD line in that round's results file. The evidence
+# scripts and --require-clean below refuse while that results file is
+# untracked, so move it out of the tree before running them.
 python3 tools/run_mutex_queue_controls.py
 
 # Ordered instructions, and the absence of any read-modify-write, read
@@ -950,7 +985,8 @@ python3 tools/inspect_interarrival.py \
 # Convert a capture to the binary dataset, then validate it exhaustively.
 # --require-clean makes the converter verify HEAD and the working tree
 # through git rather than trusting the flag typed on the line before it.
-# It is the only guard of its kind in the project; use it.
+# The five timed programs make a check like it unasked; the converter
+# makes it only with this flag, so use it.
 ./build/default/convert_capture CAPTURE.log DATASET.bin BTCUSDT \
     $(git rev-parse HEAD) 0 --require-clean
 python3 tools/validate_capture.py CAPTURE.log DATASET.bin
@@ -965,8 +1001,9 @@ bash env/dump_environment.sh
 #   a1   a2   a2b   a3b   a4   a4b
 # a1 runs both A1a (atomic-only, three orderings) and A1b (queue arms).
 # harness_a writes to stdout and creates no file, so redirect it. The
-# committed results/a*.txt are named from the utc_timestamp the harness
-# stamps into its own output.
+# names of the committed results/a*.txt carry a timestamp within a
+# second of the utc_timestamp the harness stamps into its own output.
+# The 30 August A1 file predates that stamp.
 ./build/default/harness_a $(git rev-parse HEAD) 0 a1 > /tmp/a1.txt
 
 # B1 load sweep, both baseline configurations
@@ -1002,8 +1039,11 @@ bash env/dump_environment.sh
 # a tree with changes to tracked files, so run these last or restore the
 # two files first.
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
-.venv/bin/python tools/analyse_harness_b.py results/harness_b_spin8192_*.csv \
-                                            results/harness_b_spin1000_*.csv
+# Named rather than globbed: the sweeps above write new CSVs beside the
+# committed two, and a glob would pool them.
+.venv/bin/python tools/analyse_harness_b.py \
+    results/harness_b_spin8192_20260905_131415.csv \
+    results/harness_b_spin1000_20260905_131750.csv
 
 # Tail structure. The dump is ~48 MB per run and results/tail_samples_*.csv
 # is gitignored, so the second command needs the first to have been run in
@@ -1055,7 +1095,9 @@ covers them, because the base preset hardcodes the Homebrew clang path.
 g++ -std=c++20 -Wall -Wextra -o /tmp/ip tools/interference_probe.cpp
 /tmp/ip
 
-# Refuses unless run from the root of a clean tree on aarch64 with GCC.
+# Refuses outside a git repository, on a tree that is not clean, on a
+# machine other than aarch64, or when g++ --version fails or g++ is
+# clang. Run it from the root: it does not check the working directory.
 # Its output file is named for the current date, so the 20 September
 # re-run wrote a new file beside the committed 19 September one rather
 # than replacing it.
@@ -1075,7 +1117,7 @@ cmake --build build/gcc-tsan --target test_parser test_mutex_queue \
 # glibc's BTI landing pad rejects the branch. Twenty lines of standard
 # library reproduce it (evidence/gcc_tsan_cv_wait_20260920.txt). The
 # suite passes without the sanitizer, and under LLVM's ThreadSanitizer on
-# macOS (evidence/tsan_llvm_ctest_20261002.txt).
+# macOS (evidence/tsan_llvm_ctest_20261010.txt).
 ctest --test-dir build/gcc-tsan --output-on-failure
 
 # Exits 66: GCC's runtime reports and exits where LLVM's on macOS aborts.
@@ -1092,7 +1134,8 @@ in the file, and `results/a1_memory_order_20260830_232947.txt` predates
 the header entirely, carrying a shuffle seed and nothing else. The 4
 September A1 re-run supersedes that one.
 
-**Four superseded artifacts are still committed.**
+**Superseded artifacts are still committed.** The A1 and B3 ones are
+named above; the others need a word here.
 `evidence/spsc_arm64_disassembly.txt` recorded only the cached A4 arm's
 four ordered instructions, omitting the uncached arm the file exists to
 demonstrate, and carried no provenance of any kind.
@@ -1101,7 +1144,7 @@ loops, reordered out of link order by hand, and omitted the four A3b slot
 functions in the same binary — whose disassembly this README cited as
 evidence while no committed file contained it. Both are superseded by the
 8 September regenerations, which carry provenance and are written by
-scripts that verify their own claims. The other two are not labelled in
+scripts that verify their own claims. The others are not labelled in
 their own filenames. `results/a4_index_caching_20260904_134223.txt` is
 the consumer-bound A4 configuration, in which the cached index measures
 *slower* — 0.844×. A4b replaced it with a producer-bound arm and is the
@@ -1109,8 +1152,9 @@ row quoted above; A4's result is not a contradiction, it is the reason
 A4b exists. `results/c1_tsan_20260831.txt` names the C1 race at
 `spsc_ring_buffer.hpp:93` against `:72` and `evidence/c1_tsan_report.txt`
 (5 September) at `:130` against `:100`: each report carries the file's
-line numbers at the time, and the 2 October runs name `:172` against
-`:140` (`evidence/tsan_llvm_ctest_20261002.txt`). They are kept
+line numbers at the time, and the 2 and 10 October runs name `:172`
+against `:140` (`evidence/tsan_llvm_ctest_20261002.txt`,
+`evidence/tsan_llvm_ctest_20261010.txt`). They are kept
 because deleting a measurement to make the repository tidier is the
 wrong instinct.
 
@@ -1128,13 +1172,16 @@ accepted, since overstating how dirty a build was misleads nobody.
 Every committed result predates the check, so in those files
 `git_dirty: no` is the operator's assertion, corroborated by the
 environment dump from the same session. Every result that records the
-flag has a dump from its session except the two from 28 September, the
-pacing floor and the parse-cost re-measurement, which rest on that
-session's own `git status` check. Three artifacts from 4 September
-record `git_dirty: no` beside environment dumps taken in the same second
-at the same commit recording `yes`; they are kept, and the A2b and A4b
-figures above come from re-runs on a tree verified clean before the run.
-For those files, compare the pair, not the flag.
+flag has a dump from its session except three. The two from 28
+September, the pacing floor and the parse-cost re-measurement, rest on
+that session's own `git status` check; the 5 September spin sweep's
+nearest dump was taken 13 minutes before it, at the parent of its
+commit. Three artifacts from 4 September, the first A2b run and both A4b
+runs, record `git_dirty: no` beside environment dumps taken within a
+second of them at the same commit recording `yes`. They are kept; the
+A4b headline comes from the 7 September re-run on a tree verified clean
+before the run, and A2b quotes its own 7 September re-run beside the
+4 September figure. For those files, compare the pair, not the flag.
 
 The two dirty flags differ deliberately: measurement runs pass `0`, while
 the tail dump passes `1` because it is a diagnostic rather than a reported
@@ -1145,7 +1192,8 @@ result and is expected to run against modified source.
 ## Limitations
 
 **The upper percentiles measure the operating system, not the queue.**
-Both arms sit on a ~12 µs floor from scheduler stalls arriving one to
+Both arms' upper percentiles rest on a ~12 µs floor from scheduler
+stalls arriving one to
 four hundred times per second, at a rate that differs by arm. Below p99.9 the queue difference is clean;
 at p99.9 it compresses to ~1.6×. Bare-metal Linux with thread pinning
 would resolve this; macOS offers no equivalent.
@@ -1214,10 +1262,11 @@ GCC 15's source explains it. `aarch64-cores.def` recognises `apple-m1` —
 real MIDR values, `V8_5A` — but wires all Apple parts to the
 `generic_armv8_a` tuning model, and the constant is emitted from the
 tuning model's prefetch table gated on `l1_cache_line_size >= 0`.
-`generic_prefetch_tune` leaves that field at `-1`;
+`generic_armv8_a_prefetch_tune` leaves that field at `-1`;
 `generic_armv9a_prefetch_tune`, used by the Neoverse N1 tuning, sets 64.
 **So 256 is what GCC emits when the tuning model declines to state a line
-size**, and `-mcpu=apple-m1` looks like asking GCC about this chip while
+size**, and `-mcpu=apple-m1` or `apple-m2`, which GCC 15 also
+recognises, looks like asking GCC about this chip while
 actually being routed to the table with the field unset.
 
 The result is therefore not that the libraries are wrong by 4x. It is that
